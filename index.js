@@ -1,13 +1,10 @@
 // 📁 index.js
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import 'dotenv from dotnev';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fetch from 'node-fetch';
-
-dotenv.config();
+import 'dotenv/config'; // ✅ נטען אוטומטית – לא צריך שוב dotenv.config()
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -45,9 +42,13 @@ app.post('/api/chat', async (req, res) => {
           'OpenAI-Beta': 'assistants=v2'
         }
       });
+
       const threadData = await threadRes.json();
       threadId = threadData.id;
-      if (!threadId) return res.status(500).json({ error: 'השרת לא הצליח ליצור thread חדש.' });
+
+      if (!threadId) {
+        return res.status(500).json({ error: 'השרת לא הצליח ליצור thread חדש.', detail: threadData });
+      }
     }
 
     // שלח הודעה
@@ -74,11 +75,15 @@ app.post('/api/chat', async (req, res) => {
 
     const runData = await runRes.json();
     const runId = runData.id;
-    if (!runId) return res.status(500).json({ error: 'השרת לא קיבל runId מהבוט.' });
+
+    if (!runId) {
+      return res.status(500).json({ error: 'השרת לא קיבל runId מהבוט.', detail: runData });
+    }
 
     // המתן לסיום ריצה
     let runStatus = 'in_progress';
     let maxTries = 30;
+
     while ((runStatus === 'in_progress' || runStatus === 'queued') && maxTries-- > 0) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
@@ -107,13 +112,12 @@ app.post('/api/chat', async (req, res) => {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const replyText = lastBotMessage?.content?.[0]?.text?.value || 'הבוט לא ענה.';
 
-    console.log('✅ replyText:', replyText);
-
+    console.log('✅ תגובת הבוט:', replyText);
     res.json({ reply: replyText, threadId });
 
   } catch (err) {
-    console.error('❌ שגיאה בתקשורת עם OpenAI:', err);
-    res.status(500).json({ error: 'שגיאה כללית בתקשורת עם הבוט.' });
+    console.error('❌ שגיאה:', err);
+    res.status(500).json({ error: 'שגיאה כללית בתקשורת עם הבוט.', detail: err.message });
   }
 });
 
