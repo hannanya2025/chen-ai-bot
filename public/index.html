@@ -3,8 +3,136 @@
 <head>
   <meta charset="UTF-8" />
   <title>Chen AI Bot</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0;
+      padding: 0;
+    }
+
+    h1 {
+      margin: 20px 0;
+      color: #333;
+    }
+
+    #chat {
+      width: 90%;
+      max-width: 600px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      padding: 20px;
+      margin-bottom: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .msg {
+      padding: 10px;
+      border-radius: 6px;
+      line-height: 1.5;
+    }
+
+    .user {
+      background: #d1e7dd;
+      align-self: flex-end;
+    }
+
+    .bot {
+      background: #f8d7da;
+      align-self: flex-start;
+    }
+
+    #input-container {
+      display: flex;
+      gap: 10px;
+      width: 90%;
+      max-width: 600px;
+    }
+
+    #message {
+      flex: 1;
+      padding: 10px;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+
+    #send {
+      padding: 10px 20px;
+      font-size: 1rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    #send:hover {
+      background-color: #0056b3;
+    }
+  </style>
 </head>
 <body>
   <h1>ברוך הבא לבוט של חן 🎯</h1>
+
+  <div id="chat"></div>
+
+  <div id="input-container">
+    <input type="text" id="message" placeholder="מה ברצונך לשאול?" />
+    <button id="send">שלח</button>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('message');
+    const send = document.getElementById('send');
+    let threadId = null;
+
+    function addMessage(role, text) {
+      const msg = document.createElement('div');
+      msg.classList.add('msg', role);
+      msg.textContent = text;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const text = input.value.trim();
+      if (!text) return;
+
+      addMessage('user', text);
+      input.value = '';
+      send.disabled = true;
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, threadId })
+        });
+
+        const data = await res.json();
+        threadId = data.threadId;
+        addMessage('bot', data.reply || 'לא התקבלה תשובה 😕');
+      } catch (err) {
+        addMessage('bot', 'שגיאה בשליחה לשרת 😵');
+        console.error(err);
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    }
+
+    send.addEventListener('click', sendMessage);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') sendMessage();
+    });
+  </script>
 </body>
 </html>
