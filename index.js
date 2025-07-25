@@ -24,6 +24,8 @@ app.post('/api/chat', async (req, res) => {
   const { message, threadId: clientThreadId } = req.body;
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
+console.log('🌍 OPENAI_KEY:', OPENAI_KEY);
+console.log('🤖 ASSISTANT_ID:', ASSISTANT_ID);
 
   if (!OPENAI_KEY || !ASSISTANT_ID) {
     return res.status(500).json({ error: 'Missing OPENAI_KEY or ASSISTANT_ID in .env' });
