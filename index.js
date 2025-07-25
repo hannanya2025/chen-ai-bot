@@ -34,7 +34,7 @@ app.post('/api/chat', async (req, res) => {
   try {
     let threadId = clientThreadId;
 
-    // אם אין thread קיים – צור חדש
+    // צור thread חדש אם לא קיים
     if (!threadId) {
       const threadRes = await fetch('https://api.openai.com/v1/threads', {
         method: 'POST',
@@ -78,7 +78,7 @@ app.post('/api/chat', async (req, res) => {
     const runData = await runRes.json();
     const runId = runData.id;
 
-    // המתן לסיום הריצה
+    // המתן לסיום
     let runStatus = 'in_progress';
     while (runStatus === 'in_progress' || runStatus === 'queued') {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -96,7 +96,7 @@ app.post('/api/chat', async (req, res) => {
       return res.status(500).json({ error: 'הבוט לא הצליח לעבד את הבקשה.' });
     }
 
-    // שלוף את התגובה
+    // שלוף את התגובה האחרונה של האסיסטנט
     const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
@@ -105,13 +105,15 @@ app.post('/api/chat', async (req, res) => {
     });
 
     const messagesData = await messagesRes.json();
-    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
 
-    if (!lastBotMessage) {
-      return res.status(500).json({ error: 'הבוט לא החזיר תגובה.' });
-    }
+    const assistantMessages = messagesData.data
+      .filter(m => m.role === 'assistant')
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    const replyText = lastBotMessage.content[0]?.text?.value || 'הבוט לא ענה.';
+    const lastBotMessage = assistantMessages[0];
+
+    const replyText = lastBotMessage?.content?.[0]?.text?.value || 'הבוט לא ענה.';
+
     res.json({ reply: replyText, threadId });
 
   } catch (err) {
