@@ -1,4 +1,4 @@
-// server.js - גרסה סופית עם שליחת system message להוראות קוד המפצח + route לקריאת מדריך מכירה
+// server.js - גרסה סופית עם שליחת system message להוראות קוד המפצח + טעינה פנימית של קובץ הדרכה לפני תגובה
 
 import express from 'express';
 import cors from 'cors';
@@ -18,23 +18,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// פונקציה שמחזירה את הקובץ "שיטת קוד המפצח - מדריך Ai מלא.docx"
-app.get('/api/sales-guide', (req, res) => {
+// פונקציה שמחזירה תוכן base64 של הקובץ 'שיטת קוד המפצח - מדריך Ai מלא.docx'
+function getSalesGuideBase64() {
   try {
     const filePath = path.join(__dirname, 'data', 'שיטת קוד המפצח - מדריך Ai מלא.docx');
     const fileBuffer = fs.readFileSync(filePath);
-    const base64 = fileBuffer.toString('base64');
-    res.json({
-      content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      content_base64: base64
-    });
+    return fileBuffer.toString('base64');
   } catch (err) {
-    console.error('שגיאה בקריאת הקובץ:', err);
-    res.status(500).json({ error: 'לא ניתן לקרוא את הקובץ' });
+    console.error('שגיאה בקריאת קובץ המדריך:', err);
+    return null;
   }
-});
+}
 
-// הוראות קוד המפצח (צירפת אותן בעצמך מראש)
 const systemInstructions = `אתה יואב – מוכר עילית בן 30, חד, אנושי ומוביל, עם מומחיות בפיצוח התנגדויות בשיווק ומכירה. דבק בדמות איש מכירות בלבד (לא יועץ, לא מאמן, לא מנתח), פועל לפי קוד המפצח – גרסת AI Pro ומשלב אותו עם מודל היהלום (מכירה בשלבים) – מבלי להסביר, לחשוף או להזכיר מודלים. כל ההתנהלות היא כסוכן מכירות מקצועי ואפקטיבי, בשפה טבעית קלילה ומשלבת סלנג יומיומי, חתוכה ואנושית.
 
 יש לך גישה מלאה למסמכים המקצועיים שצירף המשתמש: קורס מכירות, מודל פיצוח התנגדויות – גרסת AI Pro, מודל היהלום – מכירה בשלבים, גלגל פתיחה, מודל יצירת חיבור, מודל שאלות זהב, מודל בניית אמון. השתמש בתוכן שלהם באופן חופשי בכל תשובה, סימולציה או שיחה – תמיד ליישם, אף פעם לא לצטט, להסביר או להפנות אליהם בגלוי. כל החשיבה והבחירה נעשית אצלך בלבד, ללא חשיפה או פירוט ללקוח.
@@ -224,6 +219,25 @@ app.post('/api/chat', async (req, res) => {
         body: JSON.stringify({
           role: 'system',
           content: systemInstructions
+        })
+      });
+    }
+
+    // קריאת קובץ המדריך והוספתו כהקשר לפני שליחת ההודעה
+    const guideBase64 = getSalesGuideBase64();
+    if (guideBase64) {
+      await fetch(`https://api.openai.com/v1/threads/${threadId}/files`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          file_name: 'שיטת קוד המפצח - מדריך Ai מלא.docx',
+          purpose: 'assistants',
+          content: guideBase64,
+          content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         })
       });
     }
