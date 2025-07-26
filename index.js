@@ -1,4 +1,4 @@
-// server.js - גרסה סופית עם שימוש בקובץ שהועלה ל-OpenAI במקום טעינה מקומית
+// server.js - גרסה סופית עם קובץ מצורף פעיל בריצה
 
 import express from 'express';
 import cors from 'cors';
@@ -17,7 +17,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// הגדרת system message עם כל הוראות קוד המפצח
+// הוראות קוד המפצח
 const systemInstructions = `אתה יואב – מוכר עילית בן 30, חד, אנושי ומוביל, עם מומחיות בפיצוח התנגדויות בשיווק ומכירה. דבק בדמות איש מכירות בלבד (לא יועץ, לא מאמן, לא מנתח), פועל לפי קוד המפצח – גרסת AI Pro ומשלב אותו עם מודל היהלום (מכירה בשלבים) – מבלי להסביר, לחשוף או להזכיר מודלים. כל ההתנהלות היא כסוכן מכירות מקצועי ואפקטיבי, בשפה טבעית קלילה ומשלבת סלנג יומיומי, חתוכה ואנושית.
 
 יש לך גישה מלאה למסמכים המקצועיים שצירף המשתמש: קורס מכירות, מודל פיצוח התנגדויות – גרסת AI Pro, מודל היהלום – מכירה בשלבים, גלגל פתיחה, מודל יצירת חיבור, מודל שאלות זהב, מודל בניית אמון. השתמש בתוכן שלהם באופן חופשי בכל תשובה, סימולציה או שיחה – תמיד ליישם, אף פעם לא לצטט, להסביר או להפנות אליהם בגלוי. כל החשיבה והבחירה נעשית אצלך בלבד, ללא חשיפה או פירוט ללקוח.
@@ -170,7 +170,7 @@ R – התחלה חדשה: "זה כבר לא אני"
 * אין הסברים. אין תאוריה. רק מכירה חיה בשטח.
 `;
 
-// מזהה הקובץ שהועלה ל-OpenAI מראש
+// מזהה הקובץ שהועלה ל-OpenAI
 const SALES_GUIDE_FILE_ID = 'file-Wdd5wJDHcZCprD6HRTFd8f';
 
 app.post('/api/chat', async (req, res) => {
@@ -200,7 +200,7 @@ app.post('/api/chat', async (req, res) => {
       const threadData = await threadRes.json();
       threadId = threadData.id;
 
-      // שולח את system instructions
+      // שולח system instructions
       await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
         method: 'POST',
         headers: {
@@ -214,7 +214,7 @@ app.post('/api/chat', async (req, res) => {
         })
       });
 
-      // מצרף את קובץ ההדרכה שהועלה ל-OpenAI מראש
+      // מצרף את הקובץ ל-thread
       await fetch(`https://api.openai.com/v1/threads/${threadId}/files`, {
         method: 'POST',
         headers: {
@@ -228,7 +228,7 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // שולח את הודעת המשתמש
+    // שליחת הודעת המשתמש
     await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       method: 'POST',
       headers: {
@@ -242,7 +242,7 @@ app.post('/api/chat', async (req, res) => {
       })
     });
 
-    // הרצת האסיסטנט
+    // הרצת האסיסטנט עם הפעלת file_search
     const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
       method: 'POST',
       headers: {
@@ -251,7 +251,13 @@ app.post('/api/chat', async (req, res) => {
         'OpenAI-Beta': 'assistants=v2'
       },
       body: JSON.stringify({
-        assistant_id: ASSISTANT_ID
+        assistant_id: ASSISTANT_ID,
+        tools: [
+          {
+            type: "file_search",
+            file_ids: [SALES_GUIDE_FILE_ID]
+          }
+        ]
       })
     });
 
