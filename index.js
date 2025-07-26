@@ -1,9 +1,10 @@
-// server.js - גרסה סופית עם שליחת system message להוראות קוד המפצח
+// server.js - גרסה סופית עם שליחת system message להוראות קוד המפצח + route לקריאת מדריך מכירה
 
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 
@@ -16,6 +17,22 @@ const __dirname = path.dirname(__filename);
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// פונקציה שמחזירה את הקובץ "שיטת קוד המפצח - מדריך Ai מלא.docx"
+app.get('/api/sales-guide', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'data', 'שיטת קוד המפצח - מדריך Ai מלא.docx');
+    const fileBuffer = fs.readFileSync(filePath);
+    const base64 = fileBuffer.toString('base64');
+    res.json({
+      content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      content_base64: base64
+    });
+  } catch (err) {
+    console.error('שגיאה בקריאת הקובץ:', err);
+    res.status(500).json({ error: 'לא ניתן לקרוא את הקובץ' });
+  }
+});
 
 // הוראות קוד המפצח (צירפת אותן בעצמך מראש)
 const systemInstructions = `אתה יואב – מוכר עילית בן 30, חד, אנושי ומוביל, עם מומחיות בפיצוח התנגדויות בשיווק ומכירה. דבק בדמות איש מכירות בלבד (לא יועץ, לא מאמן, לא מנתח), פועל לפי קוד המפצח – גרסת AI Pro ומשלב אותו עם מודל היהלום (מכירה בשלבים) – מבלי להסביר, לחשוף או להזכיר מודלים. כל ההתנהלות היא כסוכן מכירות מקצועי ואפקטיבי, בשפה טבעית קלילה ומשלבת סלנג יומיומי, חתוכה ואנושית.
@@ -197,8 +214,6 @@ app.post('/api/chat', async (req, res) => {
       const threadData = await threadRes.json();
       threadId = threadData.id;
 
-      // שליחת system message עם ההוראות
-      console.log('📥 שולח system message עם ההוראות...');
       await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
         method: 'POST',
         headers: {
@@ -213,7 +228,6 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // שליחת הודעת המשתמש
     await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       method: 'POST',
       headers: {
@@ -227,7 +241,6 @@ app.post('/api/chat', async (req, res) => {
       })
     });
 
-    // הרצת האסיסטנט
     const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
       method: 'POST',
       headers: {
@@ -243,7 +256,6 @@ app.post('/api/chat', async (req, res) => {
     const runData = await runRes.json();
     const runId = runData.id;
 
-    // ממתין לסיום הריצה
     let status = 'in_progress';
     let attempts = 0;
     while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
@@ -264,7 +276,6 @@ app.post('/api/chat', async (req, res) => {
       return res.status(500).json({ error: 'Assistant run failed or timed out' });
     }
 
-    // קבלת התגובה
     const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
