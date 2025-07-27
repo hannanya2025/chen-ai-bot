@@ -220,12 +220,19 @@ async function processMessages(threadId) {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-    console.log(`✅ Got reply for thread ${threadId}, sending to ${clients.length} clients`);
+    console.log(`✅ Got reply for thread ${threadId}, sending to ${currentClients.length} clients`);
+
+    // יצירת מפתח ייחודי לתגובה
+    const responseKey = `${threadId}_${Date.now()}`;
+    processedResponses.set(responseKey, { reply, threadId, timestamp: Date.now() });
 
     // שליחת התגובה לכל הלקוחות
     const allClients = currentClients.splice(0);
-    allClients.forEach(client => {
+    console.log(`📤 Sending unified response to ${allClients.length} clients`);
+    
+    allClients.forEach((client, index) => {
       if (client?.resolve) {
+        console.log(`✅ Resolving client ${index}`);
         client.resolve({ reply, threadId });
       }
     });
@@ -251,6 +258,9 @@ async function processMessages(threadId) {
   }
 }
 
+// מאגר תגובות שכבר נשלחו
+const processedResponses = new Map();
+
 // פונקציה לתזמון עיבוד הודעות
 function scheduleProcessing(threadId, message) {
   // הכנת התורים
@@ -258,16 +268,16 @@ function scheduleProcessing(threadId, message) {
   if (!waitingClients.has(threadId)) waitingClients.set(threadId, []);
   
   // הוספת ההודעה לתור
-  messageQueues.get(threadId).push({ content: message });
+  messageQueues.get(threadId).push({ content: message, timestamp: Date.now() });
   
   console.log(`📨 Message added to queue for thread ${threadId}. Queue size: ${messageQueues.get(threadId).length}`);
   
   // יצירת Promise לתגובה
   const promise = new Promise((resolve, reject) => {
-    waitingClients.get(threadId).push({ resolve, reject });
+    waitingClients.get(threadId).push({ resolve, reject, timestamp: Date.now() });
   });
   
-  // עדכון זמן הקלדה אחרון (בגלל שזה אומר שהמשתמש עדיין פעיל)
+  // עדכון זמן הקלדה אחרון
   lastTypingTimeMap.set(threadId, Date.now());
   
   // התחלת עיבוד רק אם אין עוד processing רץ
@@ -340,7 +350,10 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // עיבוד ההודעה דרך המערכת החכמה
+    console.log(`🔄 Scheduling processing for message: "${message}"`);
     const result = await scheduleProcessing(threadId, message);
+    console.log(`✅ Got result for thread ${threadId}:`, result.reply?.substring(0, 50) + '...');
+    
     res.json(result);
 
   } catch (err) {
