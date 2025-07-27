@@ -1,4 +1,4 @@
-// index.js – גרסה מלאה, מתוקנת ומעודכנת כולל ניהול תגובת ביניים והגנה על resolve כפול
+// index.js – גרסה מלאה עם סנכרון הקלדה חכם ואיחוד הודעות לפי פעילות המשתמש
 
 import express from 'express';
 import cors from 'cors';
@@ -22,94 +22,61 @@ const retryQueues = new Map();
 const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimeouts = new Map();
+const lastTypingTimeMap = new Map();
+
 const MAX_PROCESS_TIME = 60000;
 const MAX_RETRIES = 3;
+const TYPING_GRACE_PERIOD = 1500;
 
-const systemInstructions = `...`; // קיצור למנוע העתקה מחדש – לשים את כל קוד ההוראות פה
+const systemInstructions = `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.`;
 
 async function processMessages(threadId) {
   if (processingThreads.has(threadId)) return;
-
   processingThreads.add(threadId);
-  console.log(`🔄 Starting processing for thread: ${threadId}`);
 
   const timeout = setTimeout(() => {
-    console.error(`⏰ Process timeout for thread ${threadId}, moving to retry queue`);
+    console.error(`⏰ Process timeout for thread ${threadId}`);
     processingThreads.delete(threadId);
-
     const clients = waitingClients.get(threadId) || [];
-    const allClients = clients.splice(0);
-    allClients.forEach(client => {
-      if (client && !client.settled && client.reject) {
-        client.reject(new Error('Process timeout'));
-        client.settled = true;
-      }
-    });
-
-    const queue = messageQueues.get(threadId) || [];
-    if (queue.length > 0) {
-      if (!retryQueues.has(threadId)) {
-        retryQueues.set(threadId, { messages: [], retryCount: 0 });
-      }
-      const retryData = retryQueues.get(threadId);
-      retryData.messages.push(...queue.splice(0));
-      retryData.retryCount++;
-
-      if (retryData.retryCount < MAX_RETRIES) {
-        setTimeout(() => processRetryMessages(threadId), 2000);
-      } else {
-        console.error(`❌ Max retries reached for thread ${threadId}`);
-        retryQueues.delete(threadId);
-      }
-    }
-
-    clearTimeout(processTimeouts.get(threadId));
+    clients.splice(0).forEach(client => client?.reject?.(new Error('Process timeout')));
     processTimeouts.delete(threadId);
   }, MAX_PROCESS_TIME);
-
   processTimeouts.set(threadId, timeout);
 
-  setTimeout(() => {
-    const clients = waitingClients.get(threadId) || [];
-    clients.forEach(client => {
-      if (client && !client.settled && client.resolve) {
-        client.resolve({ reply: 'רגע איתך, אני מפצח את זה...', threadId });
-        client.settled = true;
-      }
-    });
-  }, 10000);
+  // המתנה עד שהמשתמש יפסיק להקליד
+  while (true) {
+    const lastTyping = lastTypingTimeMap.get(threadId) || 0;
+    const now = Date.now();
+    if (now - lastTyping > TYPING_GRACE_PERIOD) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // איחוד הודעות בתור
+  const queue = messageQueues.get(threadId) || [];
+  const clients = waitingClients.get(threadId) || [];
+  if (!queue.length || !clients.length) {
+    processingThreads.delete(threadId);
+    clearTimeout(processTimeouts.get(threadId));
+    processTimeouts.delete(threadId);
+    return;
+  }
+
+  const allMessages = queue.splice(0);
+  const combined = allMessages.map(m => m.content).join('\n\n');
 
   try {
     const OPENAI_KEY = process.env.OPENAI_KEY;
     const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-    const queue = messageQueues.get(threadId) || [];
-    const clients = waitingClients.get(threadId) || [];
-
-    if (queue.length === 0 || clients.length === 0) {
-      processingThreads.delete(threadId);
-      clearTimeout(processTimeouts.get(threadId));
-      processTimeouts.delete(threadId);
-      return;
-    }
-
-    const allMessages = queue.splice(0);
-    const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
-
-    const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
         'Content-Type': 'application/json',
         'OpenAI-Beta': 'assistants=v2'
       },
-      body: JSON.stringify({
-        role: 'user',
-        content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
-      })
+      body: JSON.stringify({ role: 'user', content: `${systemInstructions}\n\n${combined}` })
     });
-
-    if (!messageRes.ok) throw new Error('Failed to send message');
 
     const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
       method: 'POST',
@@ -121,8 +88,6 @@ async function processMessages(threadId) {
       body: JSON.stringify({ assistant_id: ASSISTANT_ID })
     });
 
-    if (!runRes.ok) throw new Error('Failed to start run');
-
     const runData = await runRes.json();
     const runId = runData.id;
 
@@ -132,20 +97,18 @@ async function processMessages(threadId) {
     while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
       await new Promise(r => setTimeout(r, 1000));
       attempts++;
-
-      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+      const res = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
         headers: {
           'Authorization': `Bearer ${OPENAI_KEY}`,
           'OpenAI-Beta': 'assistants=v2'
         }
       });
-
-      const statusData = await statusRes.json();
+      const statusData = await res.json();
       status = statusData.status;
-      if (status === 'failed') throw new Error(`Run failed: ${statusData.last_error?.message}`);
+      if (status === 'failed') throw new Error(statusData.last_error?.message || 'Run failed');
     }
 
-    if (status !== 'completed') throw new Error('Run did not complete within expected timeframe');
+    if (status !== 'completed') throw new Error('Run did not complete in time');
 
     const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       headers: {
@@ -153,88 +116,58 @@ async function processMessages(threadId) {
         'OpenAI-Beta': 'assistants=v2'
       }
     });
-
     const messagesData = await messagesRes.json();
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
-    const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
+    const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
     const allClients = clients.splice(0);
-    allClients.forEach(client => {
-      if (client && !client.settled && client.resolve) {
-        client.resolve({ reply: replyText, threadId });
-        client.settled = true;
-      }
-    });
+    allClients.forEach(c => c?.resolve?.({ reply, threadId }));
 
   } catch (err) {
-    console.error(`❌ Error in thread ${threadId}:`, err.message);
-    const clients = waitingClients.get(threadId) || [];
     const allClients = clients.splice(0);
-    allClients.forEach(client => {
-      if (client && !client.settled && client.reject) {
-        client.reject(err);
-        client.settled = true;
-      }
-    });
+    allClients.forEach(c => c?.reject?.(err));
   } finally {
+    lastTypingTimeMap.delete(threadId);
     processingThreads.delete(threadId);
     clearTimeout(processTimeouts.get(threadId));
     processTimeouts.delete(threadId);
 
     const retryData = retryQueues.get(threadId);
-    if (retryData && retryData.messages.length > 0) {
+    if (retryData?.messages.length) {
       messageQueues.set(threadId, retryData.messages.splice(0));
       retryQueues.delete(threadId);
       processMessages(threadId);
-    } else {
-      const queue = messageQueues.get(threadId) || [];
-      if (queue.length > 0) {
-        processMessages(threadId);
-      }
+    } else if ((messageQueues.get(threadId) || []).length > 0) {
+      processMessages(threadId);
     }
   }
-}
-
-function processRetryMessages(threadId) {
-  const retryData = retryQueues.get(threadId);
-  if (!retryData || retryData.retryCount >= MAX_RETRIES) return;
-  messageQueues.set(threadId, retryData.messages.splice(0));
-  retryQueues.delete(threadId);
-  processMessages(threadId);
 }
 
 function scheduleProcessing(threadId, message) {
   if (!messageQueues.has(threadId)) messageQueues.set(threadId, []);
   if (!waitingClients.has(threadId)) waitingClients.set(threadId, []);
-
-  const queue = messageQueues.get(threadId);
-  const clients = waitingClients.get(threadId);
-
-  queue.push({ content: message, timestamp: Date.now() });
-
+  messageQueues.get(threadId).push({ content: message });
   const promise = new Promise((resolve, reject) => {
-    clients.push({ resolve, reject, settled: false });
+    waitingClients.get(threadId).push({ resolve, reject });
   });
-
-  if (queue.length === 1 || !processingThreads.has(threadId)) {
-    processMessages(threadId);
-  }
-
+  if (!processingThreads.has(threadId)) processMessages(threadId);
   return promise;
 }
+
+app.post('/api/typing', (req, res) => {
+  const { threadId } = req.body;
+  if (!threadId) return res.status(400).json({ error: 'Missing threadId' });
+  lastTypingTimeMap.set(threadId, Date.now());
+  res.json({ status: 'typing acknowledged' });
+});
 
 app.post('/api/chat', async (req, res) => {
   const { message, threadId: clientThreadId } = req.body;
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-  if (!OPENAI_KEY || !ASSISTANT_ID) {
-    return res.status(500).json({ error: 'Missing API keys' });
-  }
-
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'Message is required' });
-  }
+  if (!OPENAI_KEY || !ASSISTANT_ID) return res.status(500).json({ error: 'Missing API keys' });
+  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message is required' });
 
   try {
     let threadId = clientThreadId;
@@ -247,7 +180,6 @@ app.post('/api/chat', async (req, res) => {
           'OpenAI-Beta': 'assistants=v2'
         }
       });
-
       const threadData = await threadRes.json();
       threadId = threadData.id;
 
@@ -273,5 +205,5 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Yoav bot server running on port ${port}`);
+  console.log(`🚀 Server running on port ${port}`);
 });
