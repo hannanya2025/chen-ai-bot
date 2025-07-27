@@ -145,15 +145,15 @@ async function processMessageQueue(threadId) {
     const OPENAI_KEY = process.env.OPENAI_KEY;
     const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-    if (queue.length === 0) {
-      processingThreads.delete(threadId);
-      return;
-    }
-
     // לוקח את כל ההודעות הממתינות ברצף
     const messages = [];
     while (queue.length > 0) {
       messages.push(queue.shift());
+    }
+
+    if (messages.length === 0) {
+      processingThreads.delete(threadId);
+      return;
     }
 
     // מחבר את כל ההודעות לרצף אחד
@@ -212,11 +212,13 @@ async function processMessageQueue(threadId) {
     if (status !== 'completed') {
       console.error('Assistant run failed or timed out');
       // שליחת שגיאה לכל הלקוחות
-      clients.forEach(client => {
-        if (client.reject) {
-          client.reject(new Error('Assistant processing failed'));
-        }
-      });
+      if (clients && clients.length > 0) {
+        clients.forEach(client => {
+          if (client && client.reject) {
+            client.reject(new Error('Assistant processing failed'));
+          }
+        });
+      }
       return;
     }
 
@@ -244,11 +246,13 @@ async function processMessageQueue(threadId) {
   } catch (error) {
     console.error('Error processing message queue:', error);
     // במקרה של שגיאה, מחזיר שגיאה לכל הלקוחות הממתינים
-    clients.forEach(client => {
-      if (client.reject) {
-        client.reject(error);
-      }
-    });
+    if (clients && clients.length > 0) {
+      clients.forEach(client => {
+        if (client && client.reject) {
+          client.reject(error);
+        }
+      });
+    }
     waitingClients.delete(threadId);
   } finally {
     processingThreads.delete(threadId);
