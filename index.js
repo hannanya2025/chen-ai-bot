@@ -1,5 +1,4 @@
-// index.js – גרסה מלאה עם סנכרון הקלדה חכם ואיחוד הודעות לפי פעילות המשתמש
-
+// index.js – גרסה מלאה עם סנכרון הקלדה חכם, איחוד הודעות והגנה מכפלות
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -10,8 +9,8 @@ import 'dotenv/config';
 const app = express();
 const port = process.env.PORT || 10000;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const _filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(_filename);
 
 app.use(cors());
 app.use(express.json());
@@ -29,6 +28,9 @@ const MAX_RETRIES = 3;
 const TYPING_GRACE_PERIOD = 1500;
 
 const systemInstructions = `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.`;
+
+// הגנה גלובלית מפני שליחה כפולה
+if (!global._sentThreads) global._sentThreads = new Set();
 
 async function processMessages(threadId) {
   if (processingThreads.has(threadId)) return;
@@ -61,6 +63,8 @@ async function processMessages(threadId) {
 
   const allMessages = queue.splice(0);
   const combined = allMessages.map(m => m.content).join('\n\n');
+  const isFirstMessage = allMessages.length > 0 && !lastTypingTimeMap.has(threadId);
+  const fullContent = isFirstMessage ? `${systemInstructions}\n\n${combined}` : combined;
 
   try {
     const OPENAI_KEY = process.env.OPENAI_KEY;
@@ -73,7 +77,7 @@ async function processMessages(threadId) {
         'Content-Type': 'application/json',
         'OpenAI-Beta': 'assistants=v2'
       },
-      body: JSON.stringify({ role: 'user', content: `${systemInstructions}\n\n${combined}` })
+      body: JSON.stringify({ role: 'user', content: fullContent })
     });
 
     const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
@@ -118,8 +122,12 @@ async function processMessages(threadId) {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-    const allClients = clients.splice(0);
-    allClients.forEach(c => c?.resolve?.({ reply, threadId }));
+    const uniqueKey = `sent-${threadId}`;
+    if (!global._sentThreads.has(uniqueKey)) {
+      global._sentThreads.add(uniqueKey);
+      const allClients = clients.splice(0);
+      allClients.forEach(c => c?.resolve?.({ reply, threadId }));
+    }
 
   } catch (err) {
     const allClients = clients.splice(0);
@@ -129,6 +137,7 @@ async function processMessages(threadId) {
     processingThreads.delete(threadId);
     clearTimeout(processTimeouts.get(threadId));
     processTimeouts.delete(threadId);
+    global._sentThreads?.delete?.(`sent-${threadId}`);
 
     const retryData = retryQueues.get(threadId);
     if (retryData?.messages.length) {
@@ -161,8 +170,11 @@ app.post('/api/chat', async (req, res) => {
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-  if (!OPENAI_KEY || !ASSISTANT_ID) return res.status(500).json({ error: 'Missing API keys' });
-  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message is required' });
+  if (!OPENAI_KEY || !ASSISTANT_ID)
+    return res.status(500).json({ error: 'Missing API keys' });
+
+  if (!message || typeof message !== 'string')
+    return res.status(400).json({ error: 'Message is required' });
 
   try {
     let threadId = clientThreadId;
@@ -194,6 +206,7 @@ app.post('/api/chat', async (req, res) => {
 
     const result = await scheduleProcessing(threadId, message);
     res.json(result);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
