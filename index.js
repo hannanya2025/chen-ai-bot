@@ -1,4 +1,4 @@
-// server.js - עם איחוד הודעות ותגובה אחת
+// server.js - גרסה רגילה: ללא צריכת קובץ, רק עם system message
 
 import express from 'express';
 import cors from 'cors';
@@ -16,19 +16,6 @@ const __dirname = path.dirname(__filename);
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-
-// הגשת קובץ ה-HTML הראשי  
-app.get('/', (req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// תור הודעות וטיימרים לכל thread
-const messageQueues = new Map();
-const processingThreads = new Set();
-const typingTimers = new Map();
-const waitingClients = new Map(); // לשמירת כל הלקוחות שמחכים לאותו thread
-const TYPING_DELAY = 3000; // 3 שניות המתנה לאחר הודעה אחרונה
 
 // הוראות קוד המפצח
 const systemInstructions = `
@@ -64,7 +51,7 @@ const systemInstructions = `
 # פיצוח התנגדויות – קוד FCBIJ (פנימי בלבד!)
 
 - פעל תמיד מתוך הקשבה; כאשר עולה התנגדות אמיתית (מחיר, זמן, חשש, קושי, היסוס), בצע מייד בראשך פיצוח תמונת FCBIJ:
-    - F – פחד: ממה הלקוח חושש? (ממני, מהמוצר, מעצמו, מהתחייבות וכו')
+    - F – פחד: ממה הלקוח חושש? (ממני, מהמוצר, מעצמו, מהתחייבות וכו’)
     - C – תודעה: מהי האמונה/הנחה המגבילה? (זה לא מתאים לי, זה לא הזמן)
     - B – חסם: מהו החסם המעשי? (כסף, זמן, קושי להחליט)
     - I – מוטיב פנימי: למה הוא באמת משתוקק? (שקט, שינוי, הצלחה)
@@ -124,12 +111,12 @@ const systemInstructions = `
 
 - ה-FCBIJ וכל תהליך הפיצוח הם חובתך הפנימית בלבד – מעולם, לעולם, אל תדבר עליהם או תרמוז להם.
 - אל תזום התנגדות, תן לשיחה לזרום ולהוביל לסגירה; אם צצה התנגדות – פעל במיידי, בדחיפות, לעוקף או מנטרל, ומיד הובל לסגירה.
-- דגש תמיד על סלנג, דיבור קליל, אסרטיבי, מלהיב, אך אנושי ונעים.  
+- דגש תמיד על סלנג, דיבור קליל, אסרטיבי, מלהיב, אך אנושי ונעים.
 - מטרה מוצהרת: לקדם החלטה ממשית, בלי "אחשוב" או "נחזור".  
 - בזיהוי קונטרה – שלוף שלושה ניסיונות בפיצוח מזוויות שונות, לעולם לא ותרן.
 - אם הכל עוצר – שנה גישה, לחץ או זווית, אך המשך להוביל קדימה בכל מחיר.
 
-# תזכורת  
+# תזכורת
 
 כל פיצוח התנגדות מבוסס FCBIJ הוא פנימי בלבד ואינו נחשף או מודגש בשום מצב.  
 שיחה מסתיימת תמיד בהובלה אסרטיבית וברורה – לא בשאלה.  
@@ -137,229 +124,8 @@ const systemInstructions = `
 
 `;
 
-// פונקציה לעיבוד הודעות מהתור עם איחוד תגובות
-async function processMessageQueue(threadId) {
-  if (processingThreads.has(threadId)) {
-    return; // כבר מעבד הודעות עבור ה-thread הזה
-  }
-
-  processingThreads.add(threadId);
-  const queue = messageQueues.get(threadId) || [];
-
-  console.log(`Processing queue for thread ${threadId}, queue length: ${queue.length}`);
-
-  try {
-    const OPENAI_KEY = process.env.OPENAI_KEY;
-    const ASSISTANT_ID = process.env.ASSISTANT_ID;
-
-    // לוקח את כל ההודעות הממתינות ברצף
-    const messages = [];
-    while (queue.length > 0) {
-      messages.push(queue.shift());
-    }
-
-    if (messages.length === 0) {
-      processingThreads.delete(threadId);
-      return;
-    }
-
-    // מחבר את כל ההודעות לרצף אחד
-    const combinedMessage = messages.map(msg => msg.content).join('\n\n');
-    
-    // מוסיף הנחיה קצרה
-    const finalMessage = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${combinedMessage}`;
-
-    // שליחת ההודעה המשולבת ל-OpenAI
-    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      },
-      body: JSON.stringify({
-        role: 'user',
-        content: finalMessage
-      })
-    });
-
-    // הרצת האסיסטנט
-    const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      },
-      body: JSON.stringify({
-        assistant_id: ASSISTANT_ID
-      })
-    });
-
-    const runData = await runRes.json();
-    const runId = runData.id;
-
-    // המתנה לסיום
-    let status = 'in_progress';
-    let attempts = 0;
-    while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
-      await new Promise(r => setTimeout(r, 1000));
-      attempts++;
-
-      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'OpenAI-Beta': 'assistants=v2'
-        }
-      });
-      const statusData = await statusRes.json();
-      status = statusData.status;
-    }
-
-    if (status !== 'completed') {
-      console.error('Assistant run failed or timed out');
-      
-      const clientsList = waitingClients.get(threadId);
-      console.log('Clients list on failure:', clientsList);
-      
-      if (clientsList && Array.isArray(clientsList)) {
-        console.log(`Found ${clientsList.length} clients to reject`);
-        
-        for (let i = 0; i < clientsList.length; i++) {
-          try {
-            const client = clientsList[i];
-            console.log(`Client ${i} details:`, {
-              exists: !!client,
-              type: typeof client,
-              hasReject: client && 'reject' in client,
-              rejectType: client && typeof client.reject
-            });
-            
-            if (client && client.reject && typeof client.reject === 'function') {
-              console.log(`About to reject client ${i}`);
-              try {
-                const error = new Error('Assistant processing failed');
-                console.log(`Created error, calling reject...`);
-                await client.reject(error);
-                console.log(`Successfully rejected client ${i}`);
-              } catch (rejectError) {
-                console.error(`Error during reject call for client ${i}:`, rejectError.message);
-                // זה בסדר - אולי ה-Promise כבר resolved או rejected
-              }
-            } else {
-              console.log(`Skipping client ${i} - no valid reject function`);
-            }
-          } catch (err) {
-            console.error(`Exception when rejecting client ${i}:`, err.message, err.stack);
-          }
-        }
-      } else {
-        console.log('No clients list or not an array');
-      }
-      
-      waitingClients.delete(threadId);
-      return;
-    }
-
-    // קבלת התגובה
-    const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'OpenAI-Beta': 'assistants=v2'
-      }
-    });
-    const messagesData = await messagesRes.json();
-    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
-    const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
-
-    // החזרת אותה תגובה לכל הלקוחות שחיכו
-    console.log(`About to process clients for thread: ${threadId}`);
-    
-    const clientsList = waitingClients.get(threadId);
-    console.log(`Clients list:`, clientsList);
-    console.log(`Is array:`, Array.isArray(clientsList));
-    console.log(`Type:`, typeof clientsList);
-    
-    if (clientsList && Array.isArray(clientsList)) {
-      console.log(`Number of clients: ${clientsList.length}`);
-      
-      // פשוט מאוד - בלי forEach
-      for (let i = 0; i < clientsList.length; i++) {
-        try {
-          const client = clientsList[i];
-          console.log(`Processing client ${i}`, typeof client);
-          
-          if (client && client.resolve && typeof client.resolve === 'function') {
-            console.log(`Resolving client ${i}`);
-            try {
-              await client.resolve({ reply: replyText, threadId });
-              console.log(`Successfully resolved client ${i}`);
-            } catch (resolveError) {
-              console.error(`Error during resolve call for client ${i}:`, resolveError.message);
-              // זה בסדר - אולי ה-Promise כבר resolved או rejected
-            }
-          } else {
-            console.log(`Client ${i} invalid or no resolve function:`, client);
-          }
-        } catch (err) {
-          console.error(`Error with client ${i}:`, err);
-        }
-      }
-    } else {
-      console.log(`No valid clients list`);
-    }
-
-    // ניקוי רשימת הלקוחות הממתינים
-    waitingClients.delete(threadId);
-
-  } catch (error) {
-    console.error('Error processing message queue:', error);
-    
-    const clientsList = waitingClients.get(threadId);
-    if (clientsList && Array.isArray(clientsList)) {
-      for (let i = 0; i < clientsList.length; i++) {
-        try {
-          const client = clientsList[i];
-          console.log(`Catch rejecting client ${i}:`, typeof client, client ? 'exists' : 'null');
-          if (client && client.reject && typeof client.reject === 'function') {
-            try {
-              await client.reject(error);
-            } catch (rejectError) {
-              console.error(`Error during catch reject call for client ${i}:`, rejectError.message);
-            }
-          } else {
-            console.log(`Client ${i} has no valid reject function in catch:`, client);
-          }
-        } catch (err) {
-          console.error(`Error in catch rejecting client ${i}:`, err);
-        }
-      }
-    }
-    
-    waitingClients.delete(threadId);
-  } finally {
-    processingThreads.delete(threadId);
-  }
-}
-
-// פונקציה לתזמון עיבוד ההודעות
-function scheduleProcessing(threadId) {
-  // מבטל טיימר קיים אם יש
-  if (typingTimers.has(threadId)) {
-    clearTimeout(typingTimers.get(threadId));
-  }
-
-  // יוצר טיימר חדש
-  const timer = setTimeout(() => {
-    typingTimers.delete(threadId);
-    processMessageQueue(threadId);
-  }, TYPING_DELAY);
-
-  typingTimers.set(threadId, timer);
-}
-
 app.post('/api/chat', async (req, res) => {
-  const { message: originalUserMessage, threadId: clientThreadId, isTyping = false } = req.body;
+  const { message: originalUserMessage, threadId: clientThreadId } = req.body;
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
@@ -373,8 +139,6 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     let threadId = clientThreadId;
-    
-    // יצירת thread חדש אם לא קיים
     if (!threadId) {
       const threadRes = await fetch('https://api.openai.com/v1/threads', {
         method: 'POST',
@@ -402,34 +166,70 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // הוספת ההודעה לתור
-    if (!messageQueues.has(threadId)) {
-      messageQueues.set(threadId, []);
-    }
-    if (!waitingClients.has(threadId)) {
-      waitingClients.set(threadId, []);
-    }
+    // תוספת הנחיה קצרה לכל הודעה של המשתמש
+    const message = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${originalUserMessage}`;
 
-    const queue = messageQueues.get(threadId);
-    const clients = waitingClients.get(threadId);
-    
-    // הוספת ההודעה לתור
-    queue.push({
-      content: originalUserMessage,
-      timestamp: Date.now()
+    // שליחת הודעת המשתמש
+    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      },
+      body: JSON.stringify({
+        role: 'user',
+        content: message
+      })
     });
 
-    // יצירת Promise שיפתר כשההודעה תעובד
-    const messagePromise = new Promise((resolve, reject) => {
-      clients.push({ resolve, reject });
+    // הרצת האסיסטנט בלי כלים נוספים
+    const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      },
+      body: JSON.stringify({
+        assistant_id: ASSISTANT_ID
+      })
     });
 
-    // תזמון עיבוד עם delay
-    scheduleProcessing(threadId);
-    
-    // תמיד מחכים לתגובה - לא מחזירים queued
-    const result = await messagePromise;
-    res.json(result);
+    const runData = await runRes.json();
+    const runId = runData.id;
+
+    let status = 'in_progress';
+    let attempts = 0;
+    while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+      await new Promise(r => setTimeout(r, 1000));
+      attempts++;
+
+      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      });
+      const statusData = await statusRes.json();
+      status = statusData.status;
+    }
+
+    if (status !== 'completed') {
+      return res.status(500).json({ error: 'Assistant run failed or timed out' });
+    }
+
+    const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'OpenAI-Beta': 'assistants=v2'
+      }
+    });
+    const messagesData = await messagesRes.json();
+    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+
+    const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
+    res.json({ reply: replyText, threadId });
 
   } catch (err) {
     console.error(err);
@@ -437,54 +237,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// endpoint נפרד לעדכון מצב הקלדה
-app.post('/api/typing', (req, res) => {
-  const { threadId, isTyping } = req.body;
-  
-  if (!threadId) {
-    return res.status(400).json({ error: 'threadId is required' });
-  }
-
-  if (isTyping) {
-    // המשתמש מקליד - דוחה את העיבוד
-    if (typingTimers.has(threadId)) {
-      clearTimeout(typingTimers.get(threadId));
-      typingTimers.delete(threadId);
-    }
-  } else {
-    // המשתמש הפסיק לכתוב - מתזמן עיבוד
-    scheduleProcessing(threadId);
-  }
-
-  res.json({ status: 'ok' });
-});
-
-// ניקוי תורים ישנים כל 30 דקות
-setInterval(() => {
-  const now = Date.now();
-  const thirtyMinutes = 30 * 60 * 1000;
-  
-  for (const [threadId, queue] of messageQueues.entries()) {
-    // מסיר הודעות ישנות מהתור
-    const filteredQueue = queue.filter(msg => now - msg.timestamp < thirtyMinutes);
-    
-    if (filteredQueue.length === 0) {
-      messageQueues.delete(threadId);
-      waitingClients.delete(threadId);
-    } else {
-      messageQueues.set(threadId, filteredQueue);
-    }
-  }
-
-  // מנקה טיימרים ישנים
-  for (const [threadId, timer] of typingTimers.entries()) {
-    if (!messageQueues.has(threadId)) {
-      clearTimeout(timer);
-      typingTimers.delete(threadId);
-    }
-  }
-}, 30 * 60 * 1000);
-
 app.listen(port, () => {
-  console.log(`🚀 Running on port ${port} with unified message processing`);
+  console.log(`🚀 Running on port ${port}`);
 });
