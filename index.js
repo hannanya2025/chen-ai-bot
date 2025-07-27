@@ -218,8 +218,11 @@ async function processMessageQueue(threadId) {
         for (let i = 0; i < clientsList.length; i++) {
           try {
             const client = clientsList[i];
-            if (client && client.reject) {
+            console.log(`Rejecting client ${i}:`, typeof client, client ? 'exists' : 'null');
+            if (client && client.reject && typeof client.reject === 'function') {
               client.reject(new Error('Assistant processing failed'));
+            } else {
+              console.log(`Client ${i} has no valid reject function:`, client);
             }
           } catch (err) {
             console.error(`Error rejecting client ${i}:`, err);
@@ -260,8 +263,11 @@ async function processMessageQueue(threadId) {
       for (let i = 0; i < clientsList.length; i++) {
         try {
           const client = clientsList[i];
-          if (client && client.reject) {
+          console.log(`Catch rejecting client ${i}:`, typeof client, client ? 'exists' : 'null');
+          if (client && client.reject && typeof client.reject === 'function') {
             client.reject(error);
+          } else {
+            console.log(`Client ${i} has no valid reject function in catch:`, client);
           }
         } catch (err) {
           console.error(`Error in catch rejecting client ${i}:`, err);
