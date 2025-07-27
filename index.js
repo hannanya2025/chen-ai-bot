@@ -1,4 +1,4 @@
-// server.js - עם תור הודעות לאפשר מספר הודעות ברצף
+// server.js - עם תור הודעות וזיהוי מצב הקלדה
 
 import express from 'express';
 import cors from 'cors';
@@ -17,9 +17,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// תור הודעות לכל thread
+// תור הודעות וטיימרים לכל thread
 const messageQueues = new Map();
 const processingThreads = new Set();
+const typingTimers = new Map(); // טיימרים להמתנה
+const TYPING_DELAY = 3000; // 3 שניות המתנה לאחר הודעה אחרונה
 
 // הוראות קוד המפצח
 const systemInstructions = `
@@ -115,12 +117,12 @@ const systemInstructions = `
 
 - ה-FCBIJ וכל תהליך הפיצוח הם חובתך הפנימית בלבד – מעולם, לעולם, אל תדבר עליהם או תרמוז להם.
 - אל תזום התנגדות, תן לשיחה לזרום ולהוביל לסגירה; אם צצה התנגדות – פעל במיידי, בדחיפות, לעוקף או מנטרל, ומיד הובל לסגירה.
-- דגש תמיד על סלנג, דיבור קליל, אסרטיבי, מלהיב, אך אנושי ונעים.
+- דגש תמיד על סלנג, דיבור קליל, אסרטיבי, מלהיב, אך אנושי ונעים.  
 - מטרה מוצהרת: לקדם החלטה ממשית, בלי "אחשוב" או "נחזור".  
 - בזיהוי קונטרה – שלוף שלושה ניסיונות בפיצוח מזוויות שונות, לעולם לא ותרן.
 - אם הכל עוצר – שנה גישה, לחץ או זווית, אך המשך להוביל קדימה בכל מחיר.
 
-# תזכורת
+# תזכורת  
 
 כל פיצוח התנגדות מבוסס FCBIJ הוא פנימי בלבד ואינו נחשף או מודגש בשום מצב.  
 שיחה מסתיימת תמיד בהובלה אסרטיבית וברורה – לא בשאלה.  
@@ -128,7 +130,7 @@ const systemInstructions = `
 
 `;
 
-// פונקציה לעיבוד הודעות מהתור
+// פונקציה לעיבוד הודעות מהתור עם delay
 async function processMessageQueue(threadId) {
   if (processingThreads.has(threadId)) {
     return; // כבר מעבד הודעות עבור ה-thread הזה
@@ -238,8 +240,24 @@ async function processMessageQueue(threadId) {
   }
 }
 
+// פונקציה לתזמון עיבוד ההודעות
+function scheduleProcessing(threadId) {
+  // מבטל טיימר קיים אם יש
+  if (typingTimers.has(threadId)) {
+    clearTimeout(typingTimers.get(threadId));
+  }
+
+  // יוצר טיימר חדש
+  const timer = setTimeout(() => {
+    typingTimers.delete(threadId);
+    processMessageQueue(threadId);
+  }, TYPING_DELAY);
+
+  typingTimers.set(threadId, timer);
+}
+
 app.post('/api/chat', async (req, res) => {
-  const { message: originalUserMessage, threadId: clientThreadId } = req.body;
+  const { message: originalUserMessage, threadId: clientThreadId, isTyping = false } = req.body;
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
@@ -299,17 +317,49 @@ app.post('/api/chat', async (req, res) => {
       });
     });
 
-    // התחלת עיבוד התור (אם לא כבר רץ)
-    processMessageQueue(threadId);
-
-    // המתנה לתגובה
-    const result = await messagePromise;
-    res.json(result);
+    // תזמון עיבוד עם delay (אלא אם זה דחוף)
+    if (isTyping) {
+      // אם המשתמש עדיין מקליד, פשוט מחזיר אישור שההודעה התקבלה
+      res.json({ 
+        status: 'queued', 
+        threadId,
+        message: 'הודעה נוספה לתור, ממתין להודעות נוספות...' 
+      });
+    } else {
+      // אם המשתמש סיים לכתוב, מתזמן עיבוד עם delay
+      scheduleProcessing(threadId);
+      
+      // המתנה לתגובה
+      const result = await messagePromise;
+      res.json(result);
+    }
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+// endpoint נפרד לעדכון מצב הקלדה
+app.post('/api/typing', (req, res) => {
+  const { threadId, isTyping } = req.body;
+  
+  if (!threadId) {
+    return res.status(400).json({ error: 'threadId is required' });
+  }
+
+  if (isTyping) {
+    // המשתמש מקליד - דוחה את העיבוד
+    if (typingTimers.has(threadId)) {
+      clearTimeout(typingTimers.get(threadId));
+      typingTimers.delete(threadId);
+    }
+  } else {
+    // המשתמש הפסיק לכתוב - מתזמן עיבוד
+    scheduleProcessing(threadId);
+  }
+
+  res.json({ status: 'ok' });
 });
 
 // ניקוי תורים ישנים כל 30 דקות
@@ -327,8 +377,16 @@ setInterval(() => {
       messageQueues.set(threadId, filteredQueue);
     }
   }
+
+  // מנקה טיימרים ישנים
+  for (const [threadId, timer] of typingTimers.entries()) {
+    if (!messageQueues.has(threadId)) {
+      clearTimeout(timer);
+      typingTimers.delete(threadId);
+    }
+  }
 }, 30 * 60 * 1000);
 
 app.listen(port, () => {
-  console.log(`🚀 Running on port ${port}`);
+  console.log(`🚀 Running on port ${port} with smart typing detection`);
 });
