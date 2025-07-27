@@ -17,6 +17,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// הגשת קובץ ה-HTML הראשי  
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // תור הודעות וטיימרים לכל thread
 const messageQueues = new Map();
 const processingThreads = new Set();
@@ -388,22 +393,12 @@ app.post('/api/chat', async (req, res) => {
       clients.push({ resolve, reject });
     });
 
-    // תזמון עיבוד עם delay (אלא אם זה דחוף)
-    if (isTyping) {
-      // אם המשתמש עדיין מקליד, פשוט מחזיר אישור שההודעה התקבלה
-      res.json({ 
-        status: 'queued', 
-        threadId,
-        message: 'הודעה נוספה לתור, ממתין להודעות נוספות...' 
-      });
-    } else {
-      // אם המשתמש סיים לכתוב, מתזמן עיבוד עם delay
-      scheduleProcessing(threadId);
-      
-      // המתנה לתגובה
-      const result = await messagePromise;
-      res.json(result);
-    }
+    // תזמון עיבוד עם delay
+    scheduleProcessing(threadId);
+    
+    // תמיד מחכים לתגובה - לא מחזירים queued
+    const result = await messagePromise;
+    res.json(result);
 
   } catch (err) {
     console.error(err);
