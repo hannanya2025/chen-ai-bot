@@ -21,7 +21,7 @@ const retryQueues = new Map(); // תור חוזר להודעות שלא נענו
 const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimeouts = new Map(); // טיימר הגנה לעיבוד
-const MAX_PROCESS_TIME = 15000; // 15 שניות מקסימום לעיבוד
+const MAX_PROCESS_TIME = 30000; // 30 שניות מקסימום לעיבוד
 const MAX_RETRIES = 3; // מספר ניסיונות חוזרים מקסימלי
 
 // הוראות קוד המפצח
@@ -324,14 +324,204 @@ async function processMessages(threadId) {
 }
 
 // פונקציה לעיבוד הודעות חוזרות
-async function processRetryMessages(threadId) {
-    const retryData = retryQueues.get(threadId);
-    if (!retryData || retryData.retryCount >= MAX_RETRIES) return;
+async function processMessages(threadId) {
+    if (processingThreads.has(threadId)) return;
+    
+    processingThreads.add(threadId);
+    console.log(`🔄 Starting processing for thread: ${threadId}`);
+    
+    const timeout = setTimeout(() => {
+        console.error(`⏰ Process timeout for thread ${threadId}, moving to retry queue`);
+        processingThreads.delete(threadId);
 
-    messageQueues.set(threadId, retryData.messages.splice(0));
-    retryQueues.delete(threadId);
-    console.log(`🔄 Retrying ${messageQueues.get(threadId).length} messages for thread ${threadId}`);
-    processMessages(threadId);
+        const clients = waitingClients.get(threadId) || [];
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            if (client && client.reject) {
+                client.reject(new Error('Process timeout'));
+            }
+        });
+
+        const queue = messageQueues.get(threadId) || [];
+        if (queue.length > 0) {
+            if (!retryQueues.has(threadId)) {
+                retryQueues.set(threadId, { messages: [], retryCount: 0 });
+            }
+            const retryData = retryQueues.get(threadId);
+            retryData.messages.push(...queue.splice(0));
+            retryData.retryCount += 1;
+            console.log(`📤 Moved ${retryData.messages.length} messages to retry queue for thread ${threadId}, retry count: ${retryData.retryCount}`);
+            if (retryData.retryCount < MAX_RETRIES) {
+                setTimeout(() => processRetryMessages(threadId), 2000);
+            } else {
+                console.error(`❌ Max retries reached for thread ${threadId}, discarding messages`);
+                retryQueues.delete(threadId);
+            }
+        }
+
+        processTimeouts.delete(threadId);
+    }, MAX_PROCESS_TIME);
+
+    processTimeouts.set(threadId, timeout);
+
+    // 🟡 שלח תגובת ביניים אחרי 10 שניות
+    setTimeout(() => {
+        const clients = waitingClients.get(threadId) || [];
+        clients.forEach(client => {
+            if (client && client.resolve) {
+                try {
+                    client.resolve({ reply: 'רגע איתך, אני מפצח את זה...', threadId });
+                } catch (err) {
+                    console.error('Error sending interim response:', err);
+                }
+            }
+        });
+    }, 10000);
+
+    try {
+        const OPENAI_KEY = process.env.OPENAI_KEY;
+        const ASSISTANT_ID = process.env.ASSISTANT_ID;
+        
+        const queue = messageQueues.get(threadId) || [];
+        const clients = waitingClients.get(threadId) || [];
+
+        if (queue.length === 0 || clients.length === 0) {
+            processingThreads.delete(threadId);
+            clearTimeout(processTimeouts.get(threadId));
+            processTimeouts.delete(threadId);
+            return;
+        }
+
+        const allMessages = queue.splice(0);
+        const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
+        console.log(`📝 Combined ${allMessages.length} messages for thread ${threadId}: ${combinedMessage}`);
+
+        const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'Content-Type': 'application/json',
+                'OpenAI-Beta': 'assistants=v2'
+            },
+            body: JSON.stringify({
+                role: 'user',
+                content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
+            })
+        });
+
+        if (!messageRes.ok) {
+            throw new Error('Failed to send message');
+        }
+
+        const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'Content-Type': 'application/json',
+                'OpenAI-Beta': 'assistants=v2'
+            },
+            body: JSON.stringify({
+                assistant_id: ASSISTANT_ID
+            })
+        });
+
+        if (!runRes.ok) {
+            throw new Error('Failed to start run');
+        }
+
+        const runData = await runRes.json();
+        const runId = runData.id;
+
+        let status = 'in_progress';
+        let attempts = 0;
+
+        while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+            await new Promise(r => setTimeout(r, 1000));
+            attempts++;
+
+            const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_KEY}`,
+                    'OpenAI-Beta': 'assistants=v2'
+                }
+            });
+
+            if (!statusRes.ok) break;
+
+            const statusData = await statusRes.json();
+            status = statusData.status;
+
+            if (status === 'failed') {
+                throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
+            }
+        }
+
+        if (status !== 'completed') {
+            throw new Error('Run did not complete within expected timeframe');
+        }
+
+        const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'OpenAI-Beta': 'assistants=v2'
+            }
+        });
+
+        if (!messagesRes.ok) {
+            throw new Error('Failed to fetch response');
+        }
+
+        const messagesData = await messagesRes.json();
+        const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+        const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
+
+        console.log(`✅ Sending response to ${clients.length} clients for thread ${threadId}: ${replyText}`);
+
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            try {
+                if (client && client.resolve) {
+                    client.resolve({ reply: replyText, threadId });
+                }
+            } catch (err) {
+                console.error('Error resolving client:', err);
+            }
+        });
+
+    } catch (error) {
+        console.error(`❌ Processing error for thread ${threadId}:`, error.message);
+
+        const clients = waitingClients.get(threadId) || [];
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            try {
+                if (client && client.reject) {
+                    client.reject(error);
+                }
+            } catch (err) {
+                console.error('Error rejecting client:', err);
+            }
+        });
+
+    } finally {
+        processingThreads.delete(threadId);
+        clearTimeout(processTimeouts.get(threadId));
+        processTimeouts.delete(threadId);
+
+        const retryData = retryQueues.get(threadId);
+        if (retryData && retryData.messages.length > 0) {
+            messageQueues.set(threadId, retryData.messages.splice(0));
+            retryQueues.delete(threadId);
+            console.log(`🔄 Retrying ${messageQueues.get(threadId).length} messages for thread ${threadId}`);
+            processMessages(threadId);
+        } else {
+            const queue = messageQueues.get(threadId) || [];
+            if (queue.length > 0) {
+                console.log(`🔄 Restarting processing for thread ${threadId} with ${queue.length} remaining messages`);
+                processMessages(threadId);
+            }
+        }
+    }
 }
 
 // פונקציה להוספת הודעה לתור ולניהול עיבוד
