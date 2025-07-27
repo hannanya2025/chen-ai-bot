@@ -65,7 +65,7 @@ const systemInstructions = `
     - I – מוטיב פנימי: למה הוא באמת משתוקק? (שקט, שינוי, הצלחה)
     - J – שלב במסע: באיזו בשלות/מודעות הלקוח כרגע?
 - זהה מהר גורם או רכיב דומיננטי, בנה "קוד" פנימי בן 5 (למשל: B3XNR), ובחר איך לעקוף/לנטרל את ההתנגדות.
-- זו עבודה פנימית בלבד – לעולם אל תחשוף, תסביר, תפרש או תשאל את הלקוח על ה-FCBIJ או כל קוד.
+- זו עבודה פנימית בלבד – לעולם אל תחשף, תסביר, תפרש או תשאל את הלקוח על ה-FCBIJ או כל קוד.
 - ענה מיד – תשובה דיבורית, אסרטיבית, שמובילה קדימה לאחת: הצעה, סגירה, גבייה, תיאום או התחייבות.
 - לעולם אל תסיים בשאלה! כל פסקה (או קטע) מסתיימת במסר מוביל, חד או מסכם – אף פעם לא בשאלה.
 
@@ -184,7 +184,7 @@ async function processMessages(threadId) {
             return;
         }
 
-        // איחוד כל ההודעות בתור
+        // איחוד הודעות ישירות מהתור
         const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
         const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
         console.log(`📝 Combined ${allMessages.length} messages for thread ${threadId}: ${combinedMessage}`);
@@ -306,7 +306,7 @@ async function processMessages(threadId) {
         processingThreads.delete(threadId);
         clearTimeout(processTimeouts.get(threadId));
         processTimeouts.delete(threadId);
-        // בדוק אם יש הודעות חוזרות בתור
+        // בדוק אם יש הודעות חוזרות או חדשות בתור
         const retryData = retryQueues.get(threadId);
         if (retryData && retryData.messages.length > 0) {
             messageQueues.set(threadId, retryData.messages.splice(0));
@@ -323,7 +323,7 @@ async function processMessages(threadId) {
     }
 }
 
-// פונקציה לעיבוד הודעות חוזרות (מיותר כעת, אבל נשאר לתאימות)
+// פונקציה לעיבוד הודעות חוזרות
 async function processRetryMessages(threadId) {
     const retryData = retryQueues.get(threadId);
     if (!retryData || retryData.retryCount >= MAX_RETRIES) return;
@@ -335,7 +335,7 @@ async function processRetryMessages(threadId) {
 }
 
 // פונקציה להוספת הודעה לתור ולניהול עיבוד
-function scheduleProcessing(threadId) {
+function scheduleProcessing(threadId, originalUserMessage) {
     if (!messageQueues.has(threadId)) {
         messageQueues.set(threadId, []);
     }
@@ -344,10 +344,23 @@ function scheduleProcessing(threadId) {
     }
 
     const queue = messageQueues.get(threadId);
-    if (queue.length === 0 || !processingThreads.has(threadId)) {
-        processMessages(threadId);
+    const clients = waitingClients.get(threadId);
+    
+    queue.push({
+        content: originalUserMessage,
+        timestamp: Date.now()
+    });
+
+    const responsePromise = new Promise((resolve, reject) => {
+        clients.push({ resolve, reject });
+    });
+
+    if (queue.length === 1 || !processingThreads.has(threadId)) {
+        processMessages(threadId); // עיבוד מיידי ללא דחייה
     }
-    // אם כבר בעיבוד, ההודעה תמתין בתור ותעובד בסיום
+    console.log(`📨 Message queued for thread ${threadId}, total in queue: ${queue.length}`);
+
+    return responsePromise;
 }
 
 // Endpoints עבור התראות הקלדה (מיותר כאן אבל נשאיר לתאימות)
@@ -417,29 +430,7 @@ app.post('/api/chat', async (req, res) => {
             });
         }
 
-        if (!messageQueues.has(threadId)) {
-            messageQueues.set(threadId, []);
-        }
-        if (!waitingClients.has(threadId)) {
-            waitingClients.set(threadId, []);
-        }
-
-        const queue = messageQueues.get(threadId);
-        const clients = waitingClients.get(threadId);
-        
-        queue.push({
-            content: originalUserMessage,
-            timestamp: Date.now()
-        });
-
-        const responsePromise = new Promise((resolve, reject) => {
-            clients.push({ resolve, reject });
-        });
-
-        scheduleProcessing(threadId);
-        console.log(`📨 Message queued for thread ${threadId}, total in queue: ${queue.length}`);
-
-        const result = await responsePromise;
+        const result = await scheduleProcessing(threadId, originalUserMessage);
         res.json(result);
 
     } catch (err) {
@@ -449,7 +440,7 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`🚀 Running on port ${port} with retry mechanism`);
+    console.log(`🚀 Running on port ${port} with real-time message merging`);
     console.log('Environment check:', {
         hasOpenAIKey: !!process.env.OPENAI_KEY,
         hasAssistantID: !!process.env.ASSISTANT_ID
