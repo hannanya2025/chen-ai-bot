@@ -212,23 +212,21 @@ async function processMessageQueue(threadId) {
 
     if (status !== 'completed') {
       console.error('Assistant run failed or timed out');
-      // שליחת שגיאה לכל הלקוחות
-      try {
-        const clientsList = waitingClients.get(threadId);
-        if (clientsList && Array.isArray(clientsList)) {
-          clientsList.forEach(client => {
-            try {
-              if (client && client.reject && typeof client.reject === 'function') {
-                client.reject(new Error('Assistant processing failed'));
-              }
-            } catch (clientErr) {
-              console.error('Error rejecting client:', clientErr);
+      
+      const clientsList = waitingClients.get(threadId);
+      if (clientsList && Array.isArray(clientsList)) {
+        for (let i = 0; i < clientsList.length; i++) {
+          try {
+            const client = clientsList[i];
+            if (client && client.reject) {
+              client.reject(new Error('Assistant processing failed'));
             }
-          });
+          } catch (err) {
+            console.error(`Error rejecting client ${i}:`, err);
+          }
         }
-      } catch (errorClientError) {
-        console.error('Error rejecting clients:', errorClientError);
       }
+      
       waitingClients.delete(threadId);
       return;
     }
@@ -256,23 +254,21 @@ async function processMessageQueue(threadId) {
 
   } catch (error) {
     console.error('Error processing message queue:', error);
-    // במקרה של שגיאה, מחזיר שגיאה לכל הלקוחות הממתינים
-    try {
-      const clientsList = waitingClients.get(threadId);
-      if (clientsList && Array.isArray(clientsList)) {
-        clientsList.forEach(client => {
-          try {
-            if (client && client.reject && typeof client.reject === 'function') {
-              client.reject(error);
-            }
-          } catch (clientErr) {
-            console.error('Error in catch rejecting client:', clientErr);
+    
+    const clientsList = waitingClients.get(threadId);
+    if (clientsList && Array.isArray(clientsList)) {
+      for (let i = 0; i < clientsList.length; i++) {
+        try {
+          const client = clientsList[i];
+          if (client && client.reject) {
+            client.reject(error);
           }
-        });
+        } catch (err) {
+          console.error(`Error in catch rejecting client ${i}:`, err);
+        }
       }
-    } catch (catchClientError) {
-      console.error('Error in catch block processing clients:', catchClientError);
     }
+    
     waitingClients.delete(threadId);
   } finally {
     processingThreads.delete(threadId);
