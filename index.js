@@ -76,6 +76,10 @@ async function processMessages(threadId) {
   
   processTimeouts.set(threadId, timeout);
 
+  // קבלת התורים מההתחלה
+  const queue = messageQueues.get(threadId) || [];
+  const clients = waitingClients.get(threadId) || [];
+
   // המתנה חכמה להקלדה + הודעות מצב
   let waitTime = 0;
   let notificationSent = false;
@@ -108,11 +112,12 @@ async function processMessages(threadId) {
     console.log(`⏰ Auto-processing after ${AUTO_PROCESS_DELAY/1000}s for thread ${threadId}`);
   }
 
-  const queue = messageQueues.get(threadId) || [];
-  const clients = waitingClients.get(threadId) || [];
+  // עדכון התורים אחרי ההמתנה
+  const currentQueue = messageQueues.get(threadId) || [];
+  const currentClients = waitingClients.get(threadId) || [];
   
-  if (!queue.length || !clients.length) {
-    console.log(`⚠️ No messages or clients for thread ${threadId}`);
+  if (!currentQueue.length || !currentClients.length) {
+    console.log(`⚠️ No messages or clients for thread ${threadId} after waiting`);
     processingThreads.delete(threadId);
     clearTimeout(processTimeouts.get(threadId));
     processTimeouts.delete(threadId);
@@ -120,7 +125,7 @@ async function processMessages(threadId) {
   }
 
   // איחוד כל ההודעות
-  const allMessages = queue.splice(0);
+  const allMessages = currentQueue.splice(0);
   const combined = allMessages.map(m => m.content).join('\n\n');
   const isFirstMessage = !lastTypingTimeMap.has(threadId + '_processed');
   const fullContent = isFirstMessage ? 
@@ -218,7 +223,7 @@ async function processMessages(threadId) {
     console.log(`✅ Got reply for thread ${threadId}, sending to ${clients.length} clients`);
 
     // שליחת התגובה לכל הלקוחות
-    const allClients = clients.splice(0);
+    const allClients = currentClients.splice(0);
     allClients.forEach(client => {
       if (client?.resolve) {
         client.resolve({ reply, threadId });
@@ -231,7 +236,8 @@ async function processMessages(threadId) {
   } catch (err) {
     console.error(`❌ Error processing messages for thread ${threadId}:`, err.message);
     
-    const allClients = clients.splice(0);
+    const currentClients = waitingClients.get(threadId) || [];
+    const allClients = currentClients.splice(0);
     allClients.forEach(client => {
       if (client?.reject) {
         client.reject(err);
