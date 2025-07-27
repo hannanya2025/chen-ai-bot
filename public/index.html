@@ -278,7 +278,6 @@
         class ChatApp {
             constructor() {
                 this.threadId = null;
-                this.isWaitingForResponse = false;
                 this.typingTimer = null;
                 
                 this.initElements();
@@ -438,8 +437,7 @@
 
             async sendMessage() {
                 const text = this.messageInput.value.trim();
-                if (!text || this.isWaitingForResponse) return;
-                this.isWaitingForResponse = true;
+                if (!text) return;
 
                 this.addMessage('user', text);
                 this.messageInput.value = '';
@@ -473,7 +471,6 @@
                     this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
                     console.error('Error:', error);
                 } finally {
-                    this.isWaitingForResponse = false;
                     this.updateSendButton(false);
                 }
             }
