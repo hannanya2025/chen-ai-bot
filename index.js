@@ -213,13 +213,18 @@ async function processMessageQueue(threadId) {
     if (status !== 'completed') {
       console.error('Assistant run failed or timed out');
       // שליחת שגיאה לכל הלקוחות
-      const clientsArray = waitingClients.get(threadId) || [];
-      if (clientsArray.length > 0) {
-        clientsArray.forEach(client => {
-          if (client && typeof client.reject === 'function') {
-            client.reject(new Error('Assistant processing failed'));
+      try {
+        const clientsArray = waitingClients.get(threadId);
+        if (clientsArray && Array.isArray(clientsArray) && clientsArray.length > 0) {
+          for (let i = 0; i < clientsArray.length; i++) {
+            const client = clientsArray[i];
+            if (client && typeof client.reject === 'function') {
+              client.reject(new Error('Assistant processing failed'));
+            }
           }
-        });
+        }
+      } catch (errorClientError) {
+        console.error('Error rejecting clients:', errorClientError);
       }
       waitingClients.delete(threadId);
       return;
@@ -249,13 +254,18 @@ async function processMessageQueue(threadId) {
   } catch (error) {
     console.error('Error processing message queue:', error);
     // במקרה של שגיאה, מחזיר שגיאה לכל הלקוחות הממתינים
-    const clientsArray = waitingClients.get(threadId) || [];
-    if (clientsArray.length > 0) {
-      clientsArray.forEach(client => {
-        if (client && typeof client.reject === 'function') {
-          client.reject(error);
+    try {
+      const clientsArray = waitingClients.get(threadId);
+      if (clientsArray && Array.isArray(clientsArray) && clientsArray.length > 0) {
+        for (let i = 0; i < clientsArray.length; i++) {
+          const client = clientsArray[i];
+          if (client && typeof client.reject === 'function') {
+            client.reject(error);
+          }
         }
-      });
+      }
+    } catch (catchClientError) {
+      console.error('Error in catch block processing clients:', catchClientError);
     }
     waitingClients.delete(threadId);
   } finally {
