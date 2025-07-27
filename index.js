@@ -1,4 +1,5 @@
-// index.js – גרסה מלאה עם סנכרון הקלדה חכם, איחוד הודעות והגנה מכפלות
+// index.js – גרסה מלאה עם סנכרון הקלדה חכם ואיחוד הודעות לפי פעילות המשתמש
+
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -17,20 +18,14 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const messageQueues = new Map();
-const retryQueues = new Map();
-const processingThreads = new Set();
 const waitingClients = new Map();
+const processingThreads = new Set();
 const processTimeouts = new Map();
 const lastTypingTimeMap = new Map();
 
 const MAX_PROCESS_TIME = 60000;
-const MAX_RETRIES = 3;
 const TYPING_GRACE_PERIOD = 1500;
-
-const systemInstructions = `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.`;
-
-// הגנה גלובלית מפני שליחה כפולה
-if (!global._sentThreads) global._sentThreads = new Set();
+const systemInstructions = 'זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.';
 
 async function processMessages(threadId) {
   if (processingThreads.has(threadId)) return;
@@ -92,7 +87,6 @@ async function processMessages(threadId) {
 
     const runData = await runRes.json();
     const runId = runData.id;
-
     let status = 'in_progress';
     let attempts = 0;
 
@@ -122,12 +116,8 @@ async function processMessages(threadId) {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-    const uniqueKey = `sent-${threadId}`;
-    if (!global._sentThreads.has(uniqueKey)) {
-      global._sentThreads.add(uniqueKey);
-      const allClients = clients.splice(0);
-      allClients.forEach(c => c?.resolve?.({ reply, threadId }));
-    }
+    const allClients = clients.splice(0);
+    allClients.forEach(c => c?.resolve?.({ reply, threadId }));
 
   } catch (err) {
     const allClients = clients.splice(0);
@@ -137,13 +127,6 @@ async function processMessages(threadId) {
     processingThreads.delete(threadId);
     clearTimeout(processTimeouts.get(threadId));
     processTimeouts.delete(threadId);
-    global._sentThreads?.delete?.(`sent-${threadId}`);
-
-    const retryData = retryQueues.get(threadId);
-    if (retryData?.messages.length) {
-      messageQueues.set(threadId, retryData.messages.splice(0));
-      retryQueues.delete(threadId);
-    }
   }
 }
 
@@ -170,11 +153,8 @@ app.post('/api/chat', async (req, res) => {
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-  if (!OPENAI_KEY || !ASSISTANT_ID)
-    return res.status(500).json({ error: 'Missing API keys' });
-
-  if (!message || typeof message !== 'string')
-    return res.status(400).json({ error: 'Message is required' });
+  if (!OPENAI_KEY || !ASSISTANT_ID) return res.status(500).json({ error: 'Missing API keys' });
+  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message is required' });
 
   try {
     let threadId = clientThreadId;
@@ -197,10 +177,7 @@ app.post('/api/chat', async (req, res) => {
           'Content-Type': 'application/json',
           'OpenAI-Beta': 'assistants=v2'
         },
-        body: JSON.stringify({
-          role: 'user',
-          content: systemInstructions
-        })
+        body: JSON.stringify({ role: 'user', content: systemInstructions })
       });
     }
 
