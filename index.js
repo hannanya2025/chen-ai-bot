@@ -21,7 +21,7 @@ const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimers = new Map();
 const processTimeouts = new Map(); // טיימר הגנה לעיבוד
-const DELAY_TIME = 1000; // 1 שנייה לאיסוף הודעות
+const DELAY_TIME = 1500; // 1.5 שניות לאיסוף הודעות
 const MAX_PROCESS_TIME = 10000; // 10 שניות מקסימום לעיבוד
 
 // הוראות קוד המפצח
@@ -294,27 +294,26 @@ async function processMessages(threadId) {
     }
 }
 
-// פונקציה לתזמון עיבוד משופרת
+// פונקציה לתזמון עיבוד עם דחייה קצרה
 function scheduleProcessing(threadId) {
-    if (processTimers.has(threadId) || processingThreads.has(threadId)) {
+    if (processingThreads.has(threadId)) {
         console.log(`⏳ Delaying processing for thread ${threadId} due to active process`);
-        return; // דוחה את העיבוד אם כבר בעיבוד
+        return; // דוחה אם כבר בעיבוד
     }
 
-    const timer = setTimeout(async () => {
-        const queue = messageQueues.get(threadId) || [];
-        if (queue.length === 0) {
+    if (!processTimers.has(threadId)) {
+        const timer = setTimeout(async () => {
+            const queue = messageQueues.get(threadId) || [];
+            if (queue.length > 0) {
+                await processMessages(threadId);
+            }
             processTimers.delete(threadId);
-            return;
-        }
-        processTimers.delete(threadId);
-        await processMessages(threadId);
-    }, DELAY_TIME);
-
-    processTimers.set(threadId, timer);
+        }, DELAY_TIME);
+        processTimers.set(threadId, timer);
+    }
 }
 
-// Endpoints עבור התראות הקלדה
+// Endpoints עבור התראות הקלדה (מיותר כאן אבל נשאיר לתאימות)
 app.post('/api/typing', (req, res) => {
     const { threadId } = req.body;
     if (!threadId) {
