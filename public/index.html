@@ -252,7 +252,7 @@
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h1>🎯 יואב - מפצח התנגדויות</h1>
+            <h1>🤖 יואב - מפצח התנגדויות</h1>
             <div class="online-status">● מחובר ומוכן לעזור</div>
         </div>
         
@@ -304,11 +304,7 @@
                 });
 
                 this.messageInput.addEventListener('input', () => {
-                    if (this.messageInput.value.trim()) {
-                        this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
-                    } else {
-                        this.sendButton.style.background = '#ccc';
-                    }
+                    this.updateUI(); // עדכון צבע הכפתור
                 });
             }
 
@@ -325,7 +321,7 @@
                 
                 const avatar = document.createElement('div');
                 avatar.className = `avatar ${role}-avatar`;
-                avatar.textContent = role === 'user' ? '👤' : '🎯';
+                avatar.textContent = role === 'user' ? '👤' : '🤖';
                 
                 const bubble = document.createElement('div');
                 bubble.className = 'message-bubble';
@@ -350,7 +346,7 @@
                 
                 const avatar = document.createElement('div');
                 avatar.className = 'avatar bot-avatar';
-                avatar.textContent = '🎯';
+                avatar.textContent = '🤖';
                 
                 const dotsDiv = document.createElement('div');
                 dotsDiv.className = 'typing-dots';
@@ -403,13 +399,13 @@
 
             async sendMessage() {
                 const text = this.messageInput.value.trim();
-                if (!text || this.isWaitingForResponse) return;
+                if (!text) return; // הסרתי את התנאי isWaitingForResponse
 
                 this.addMessage('user', text);
                 this.messageInput.value = '';
                 
-                this.isWaitingForResponse = true;
-                this.updateUI();
+                // מעדכן רק את הכפתור ויזואלית
+                this.updateSendButton(true);
                 this.showTypingIndicator();
 
                 try {
@@ -438,22 +434,29 @@
                     this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
                     console.error('Error:', error);
                 } finally {
-                    this.isWaitingForResponse = false;
-                    this.updateUI();
+                    this.updateSendButton(false);
                 }
             }
 
-            updateUI() {
-                this.sendButton.disabled = this.isWaitingForResponse;
-                
-                if (this.isWaitingForResponse) {
+            updateSendButton(isProcessing) {
+                if (isProcessing) {
                     this.sendButton.textContent = '⏳';
                 } else {
                     this.sendButton.textContent = '➤';
                     this.messageInput.focus();
                 }
                 
-                if (this.messageInput.value.trim() && !this.isWaitingForResponse) {
+                // עדכון צבע כפתור
+                if (this.messageInput.value.trim()) {
+                    this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
+                } else {
+                    this.sendButton.style.background = '#ccc';
+                }
+            }
+
+            updateUI() {
+                // רק עדכון ויזואלי, לא חסימה
+                if (this.messageInput.value.trim()) {
                     this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
                 } else {
                     this.sendButton.style.background = '#ccc';
