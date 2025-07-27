@@ -21,7 +21,9 @@ const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimers = new Map();
 const typingStatus = new Map();
+const processTimeouts = new Map(); // טיימר הגנה לעיבוד
 const DELAY_TIME = 3000; // 3 שניות המתנה
+const MAX_PROCESS_TIME = 10000; // 10 שניות מקסימום לעיבוד
 
 // הוראות קוד המפצח
 const systemInstructions = `
@@ -53,6 +55,23 @@ async function processMessages(threadId) {
     processingThreads.add(threadId);
     console.log(`🔄 Processing messages for thread: ${threadId}`);
     
+    // טיימר הגנה לעיבוד
+    const timeout = setTimeout(() => {
+        console.error(`⏰ Process timeout for thread ${threadId}, resetting`);
+        processingThreads.delete(threadId);
+        const clients = waitingClients.get(threadId) || [];
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            if (client && client.reject) {
+                client.reject(new Error('Process timeout'));
+            }
+        });
+        messageQueues.delete(threadId);
+        processTimeouts.delete(threadId);
+    }, MAX_PROCESS_TIME);
+
+    processTimeouts.set(threadId, timeout);
+
     try {
         const OPENAI_KEY = process.env.OPENAI_KEY;
         const ASSISTANT_ID = process.env.ASSISTANT_ID;
@@ -62,6 +81,8 @@ async function processMessages(threadId) {
         
         if (queue.length === 0 || clients.length === 0) {
             processingThreads.delete(threadId);
+            clearTimeout(processTimeouts.get(threadId));
+            processTimeouts.delete(threadId);
             return;
         }
 
@@ -196,6 +217,8 @@ async function processMessages(threadId) {
         
     } finally {
         processingThreads.delete(threadId);
+        clearTimeout(processTimeouts.get(threadId));
+        processTimeouts.delete(threadId);
     }
 }
 
