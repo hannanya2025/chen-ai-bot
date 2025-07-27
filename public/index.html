@@ -358,6 +358,11 @@
                 this.chatMessages.appendChild(messageDiv);
                 this.scrollToBottom();
                 
+                // החזרת פוקוס לשדה הכתיבה אחרי הוספת הודעה
+                setTimeout(() => {
+                    this.messageInput.focus();
+                }, 50);
+                
                 return messageDiv; // מחזיר את האלמנט לעדכונים עתידיים
             }
 
@@ -492,6 +497,10 @@
                 } finally {
                     this.isProcessing = false;
                     this.currentRequest = null;
+                    // החזרת פוקוס לשדה הכתיבה
+                    setTimeout(() => {
+                        this.messageInput.focus();
+                    }, 100);
                 }
             }
 
@@ -531,6 +540,10 @@
                         } finally {
                             this.isProcessing = false;
                             this.currentRequest = null;
+                            // החזרת פוקוס לשדה הכתיבה
+                            setTimeout(() => {
+                                this.messageInput.focus();
+                            }, 100);
                         }
                     }, 300);
                     
