@@ -26,7 +26,9 @@ const lastTypingTimeMap = new Map();
 
 // הגדרות זמן
 const MAX_PROCESS_TIME = 60000; // דקה מקסימום לעיבוד
-const TYPING_GRACE_PERIOD = 1500; // 1.5 שניות אחרי הקלדה אחרונה
+const TYPING_GRACE_PERIOD = 3000; // 3 שניות אחרי הקלדה אחרונה
+const AUTO_PROCESS_DELAY = 10000; // 10 שניות מקסימום המתנה לפני עיבוד אוטומטי
+const LONG_PROCESS_NOTIFICATION = 5000; // אחרי 5 שניות - שלח הודעת עיבוד
 
 // הוראות המערכת
 const systemInstructions = `
@@ -74,16 +76,36 @@ async function processMessages(threadId) {
   
   processTimeouts.set(threadId, timeout);
 
-  // המתנה להקלדה להסתיים
-  while (true) {
+  // המתנה חכמה להקלדה + הודעות מצב
+  let waitTime = 0;
+  let notificationSent = false;
+  const startTime = Date.now();
+  
+  while (waitTime < AUTO_PROCESS_DELAY) {
     const lastTyping = lastTypingTimeMap.get(threadId) || 0;
     const now = Date.now();
-    if (now - lastTyping > TYPING_GRACE_PERIOD) {
-      console.log(`✅ Typing finished for thread ${threadId}`);
+    const timeSinceLastTyping = now - lastTyping;
+    
+    // אם עבר מספיק זמן מההקלדה האחרונה - נמשיך לעיבוד
+    if (timeSinceLastTyping > TYPING_GRACE_PERIOD) {
+      console.log(`✅ User finished typing for thread ${threadId}. Processing ${queue.length} messages.`);
       break;
     }
-    console.log(`⌨️ Still typing... waiting for thread ${threadId}`);
+    
+    // שליחת הודעת מצב אחרי 5 שניות
+    if (waitTime > LONG_PROCESS_NOTIFICATION && !notificationSent) {
+      console.log(`💬 Sending "still typing" notification for thread ${threadId}`);
+      // כאן אפשר לשלוח הודעה למשתמש שהבוט ממתין
+      notificationSent = true;
+    }
+    
+    console.log(`⌨️ User still typing... waiting for thread ${threadId} (${Math.round(waitTime/1000)}s)`);
     await new Promise(r => setTimeout(r, 500));
+    waitTime += 500;
+  }
+  
+  if (waitTime >= AUTO_PROCESS_DELAY) {
+    console.log(`⏰ Auto-processing after ${AUTO_PROCESS_DELAY/1000}s for thread ${threadId}`);
   }
 
   const queue = messageQueues.get(threadId) || [];
@@ -232,14 +254,22 @@ function scheduleProcessing(threadId, message) {
   // הוספת ההודעה לתור
   messageQueues.get(threadId).push({ content: message });
   
+  console.log(`📨 Message added to queue for thread ${threadId}. Queue size: ${messageQueues.get(threadId).length}`);
+  
   // יצירת Promise לתגובה
   const promise = new Promise((resolve, reject) => {
     waitingClients.get(threadId).push({ resolve, reject });
   });
   
-  // התחלת עיבוד אם לא רץ כבר
+  // עדכון זמן הקלדה אחרון (בגלל שזה אומר שהמשתמש עדיין פעיל)
+  lastTypingTimeMap.set(threadId, Date.now());
+  
+  // התחלת עיבוד רק אם אין עוד processing רץ
   if (!processingThreads.has(threadId)) {
+    console.log(`🎯 Starting smart processing for thread ${threadId}`);
     processMessages(threadId);
+  } else {
+    console.log(`⏳ Processing already running for thread ${threadId}, message queued`);
   }
   
   return promise;
