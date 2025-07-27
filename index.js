@@ -20,9 +20,8 @@ const messageQueues = new Map();
 const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimers = new Map();
-const typingStatus = new Map();
 const processTimeouts = new Map(); // טיימר הגנה לעיבוד
-const DELAY_TIME = 3000; // 3 שניות המתנה
+const DELAY_TIME = 1000; // 1 שנייה לאיסוף הודעות
 const MAX_PROCESS_TIME = 10000; // 10 שניות מקסימום לעיבוד
 
 // הוראות קוד המפצח
@@ -170,18 +169,7 @@ async function processMessages(threadId) {
             return;
         }
 
-        // ממתין עד שהתור יציב (אין הקלדה חדשה)
-        while (typingStatus.has(threadId)) {
-            const lastTyping = typingStatus.get(threadId);
-            const timeSinceTyping = Date.now() - lastTyping;
-            if (timeSinceTyping < DELAY_TIME) {
-                await new Promise(resolve => setTimeout(resolve, 500)); // המתנה קצרה
-                continue;
-            }
-            typingStatus.delete(threadId); // מסיים את מצב ההקלדה אם חלפו 3 שניות
-        }
-
-        // איחוד כל ההודעות בתור לאחר שהתור יציב
+        // איחוד כל ההודעות בתור לאחר שהטיימר הסתיים
         const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
         const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
         console.log(`📝 Combined ${allMessages.length} messages: ${combinedMessage}`);
@@ -315,14 +303,6 @@ function scheduleProcessing(threadId) {
 
     const timer = setTimeout(async () => {
         const queue = messageQueues.get(threadId) || [];
-        if (typingStatus.has(threadId)) {
-            const lastTyping = typingStatus.get(threadId);
-            const timeSinceTyping = Date.now() - lastTyping;
-            if (timeSinceTyping < DELAY_TIME) {
-                scheduleProcessing(threadId); // דחה שוב אם עדיין מקלידים
-                return;
-            }
-        }
         if (queue.length === 0) {
             processTimers.delete(threadId);
             return;
@@ -340,8 +320,6 @@ app.post('/api/typing', (req, res) => {
     if (!threadId) {
         return res.status(400).json({ error: 'ThreadId is required' });
     }
-    typingStatus.set(threadId, Date.now());
-    scheduleProcessing(threadId);
     res.json({ status: 'typing received' });
 });
 
@@ -350,8 +328,6 @@ app.post('/api/typing-stop', (req, res) => {
     if (!threadId) {
         return res.status(400).json({ error: 'ThreadId is required' });
     }
-    typingStatus.delete(threadId);
-    scheduleProcessing(threadId);
     res.json({ status: 'typing stopped' });
 });
 
