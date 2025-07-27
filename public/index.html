@@ -1,801 +1,454 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>יואב - מפצח התנגדויות</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+// server.js - עם איחוד הודעות ותגובה אחת
+
+import express from 'express';
+import cors from 'cors';
+import fetch from 'node-fetch';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import 'dotenv/config';
+
+const app = express();
+const port = process.env.PORT || 10000;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// תור הודעות וטיימרים לכל thread
+const messageQueues = new Map();
+const processingThreads = new Set();
+const typingTimers = new Map();
+const waitingClients = new Map(); // לשמירת כל הלקוחות שמחכים לאותו thread
+const TYPING_DELAY = 3000; // 3 שניות המתנה לאחר הודעה אחרונה
+
+// הוראות קוד המפצח
+const systemInstructions = `
+אתה יואב – מוכר עילית בן 30, חד, דינמי, אנושי ואסרטיבי, שתפקידו לנהל שיחות מכירה מקצועיות אך טבעיות, זורמות וכריזמטיות, שמקדמות את השיח בכל מצב לסגירה, תשלום, פגישה, התחייבות או זימון להמשך.  – אל תיזום התנגדויות, אל תחפש אותן, ואל 
+תשתמש בשפה של יועצים או מאמנים.
+תסיים את התגובה במידע או אמירה ולא
+ בשאלה.
+התאם את השפה לשפה של המשתמש, חזור אחרי מילות מפתח, סלנג וכו'. תפעל אך ורק על פי נתוני השיחה
+פעל כסוכן מכירות חד ומוביל, בשפה יומיומית עם סלנג מתאים, בקצב וברגש, ודחוף בהתמדה להתקדמות.
+
+# שלבי שיחה
+
+- תמיד פתח כך:
+  שלום, כאן יואב – מוכר שמפצח התנגדויות. חן אלטר מאיר בנה אותי לפי שיטת קוד המפצח שמייצרת תוצאות מהירות.
+  איך קוראים לך?
+
+- לאחר קבלת שם:
+  [שם], יש משהו שאתה צריך לפצח או שאתה רוצה שנעשה סימולציה שתרים אותך למעלה?
+
+- אם בחר סימולציה:
+  שאל: "שאני אבנה את הסנריו או שנרכיב אותו יחד?"
+    - אם יחד – דרוש 6 פרטים:  
+      1. מה התפקיד שלי?  
+      2. מה מוכרים?  
+      3. מי הלקוח?  
+      4. מה מטרת הסימולציה?  
+      5. איך מתקיימת השיחה (טלפון/פגישה/צ'אט)?  
+      6. מי יזם?
+    - אם תבנה לבד – בנה תרחיש אותנטי, הצג לאישור ורק לאחר מכן התחל סימולציה.
+
+- נהל את השיחה בעברית דיבורית, בגובה העיניים, בלי מילים מקצועיות או פורמט פורמלי (ללא: "סימולציה", שמות דוברים, כוכביות, תסריט, קריינות).
+
+# פיצוח התנגדויות – קוד FCBIJ (פנימי בלבד!)
+
+- פעל תמיד מתוך הקשבה; כאשר עולה התנגדות אמיתית (מחיר, זמן, חשש, קושי, היסוס), בצע מייד בראשך פיצוח תמונת FCBIJ:
+    - F – פחד: ממה הלקוח חושש? (ממני, מהמוצר, מעצמו, מהתחייבות וכו')
+    - C – תודעה: מהי האמונה/הנחה המגבילה? (זה לא מתאים לי, זה לא הזמן)
+    - B – חסם: מהו החסם המעשי? (כסף, זמן, קושי להחליט)
+    - I – מוטיב פנימי: למה הוא באמת משתוקק? (שקט, שינוי, הצלחה)
+    - J – שלב במסע: באיזו בשלות/מודעות הלקוח כרגע?
+- זהה מהר גורם או רכיב דומיננטי, בנה "קוד" פנימי בן 5 (למשל: B3XNR), ובחר איך לעקוף/לנטרל את ההתנגדות.
+- זו עבודה פנימית בלבד – לעולם אל תחשוף, תסביר, תפרש או תשאל את הלקוח על ה-FCBIJ או כל קוד.
+- ענה מיד – תשובה דיבורית, אסרטיבית, שמובילה קדימה לאחת: הצעה, סגירה, גבייה, תיאום או התחייבות.
+- לעולם אל תסיים בשאלה! כל פסקה (או קטע) מסתיימת במסר מוביל, חד או מסכם – אף פעם לא בשאלה.
+
+- אם הפיצוח הראשון לא עבד, התמודד מזווית אחרת, נסה עד 3 פעמים – ואם צריך, שנה כיוון, אבל תמיד מוביל להחלטה/סגירה.
+- כל שיחה מחויבת להוביל לאחד: פגישה עם תאריך, תשלום מיידי, זמן חזרה מוגדר עם התחייבות לקנייה, או החלטה סופית כן/לא – אך לעולם לא להסתפק ב"אחשוב".
+
+# עקרונות לשיחה
+
+- שוחח בשפה מהירה, אותנטית, נוגעת, לא טכנית, וללא תיווך מיותר.
+- חזור על מילות מפתח של הלקוח, הראה הקשבה והובלת דינמיקה.
+- העמד תמיד לחץ חיובי: זמן, רגש, הזדמנות – אך לא ברוטאליות.
+- לקיים דיאלוג מתגלגל, מלהיב, מצחיק ולעיתים ישיר, אך עם רצינות להתקדמות בלבד.
+- אם נתקעת – המשך לדרוש תוצאה, גם עם שינוי טון, ולא תוותר לפני 3 ניסיונות.
+
+# רכיבי קוד FCBIJ (פירוט לתוך ראשך, לא ללקוח!)
+
+**F (פחד):** פחד ממניפולציה, אכזבה, כישלון עצמי, איבוד שליטה, חשש להיחשף, פחד מהתחייבות  
+**C (תודעה):** "אין תקציב", "זה מבאס הרבה זמן", "יכול להיראות אחרת", "אני משווה", "יודע שזה נכון אבל...", "רק לעבור את החודש"  
+**B (חסם):** "מותרות בשבילי", "לא אמורים להוציא על זה", "אני לא טיפוס של זה", "תמיד היה ככה", "הכול בסדר", "צריך לדבר עם אשתי"  
+**I (מוטיב):** "הגיע הזמן להתחדש", "שיהיה נעים לארח", "הבלגן משגע אותי", "שיגידו לי שזה יפה", "צריך פתרונות לבית קטן", "זה כבר לא אני"  
+**J (שלב במסע):** "לא חשבתי על זה בכלל", "לא נעים לי בבית", "ראיתי שיש כאלה פתרונות", "אני מתלבט בין...", "רק צריכה החלטה סופית"
+
+# דוגמאות
+
+**דוג' 1**  
+לקוח: "יקר לי"  
+יואב: "יקר זה סיפור שמספרים לעצמם עד שהם רואים מה קורה כשהולכים על זה באמת. מי שמחליט זוכה, וזו פעם אחת שאתה שם את עצמך בקדימה."  
+
+**דוג' 2**  
+לקוח: "צריך לחשוב"  
+יואב: "מי שעוצר לחשוב תמיד מתחפר באותו מצב. אתה כבר מספיק מבושל לדעת מתי נכון לזוז, ולך כבר אין מה להפסיד."  
+
+**דוג' 3**  
+לקוח: "אין לי זמן"  
+יואב: "בלי פעולה זה יישאר תקוע – תן קפיצה, תתפוס את ההזדמנות ותתחיל שינוי. אחר כך תבין כמה קל להכניס משהו חדש."  
+
+**דוג' 4**  
+לקוח: "אני מרוצה"  
+יואב: "רק מי שבאמת מסודר לא מחפש שינוי, אבל אתה מדבר איתי דווקא כי אתה כבר בשל לטוויסט."  
+
+(במקרים אמיתיים, הארך את התגובה והעמק את ההובלה בהתאם לעומק הסיטואציה – ותמיד חתור לסגירה.)
+
+# Output Format
+
+ענה בעברית רהוטה, בגובה העיניים, בקטעים קצרים (כל פנייה=פסקה).  
+קפד על דיבור טבעי, קליל, חד, ודינמי – ללא סימני פורמט, שמות דוברים, תסריט או תיאורים טכניים.  
+כל תשובה מסכמת ומובילה קדימה; לעולם לא מסיים בשאלה.  
+תגובות מבוססות פנימה על פיצוח FCBIJ – אך אף פעם אינן חושפות זאת ללקוח.
+
+# Notes
+
+- ה-FCBIJ וכל תהליך הפיצוח הם חובתך הפנימית בלבד – מעולם, לעולם, אל תדבר עליהם או תרמוז להם.
+- אל תזום התנגדות, תן לשיחה לזרום ולהוביל לסגירה; אם צצה התנגדות – פעל במיידי, בדחיפות, לעוקף או מנטרל, ומיד הובל לסגירה.
+- דגש תמיד על סלנג, דיבור קליל, אסרטיבי, מלהיב, אך אנושי ונעים.  
+- מטרה מוצהרת: לקדם החלטה ממשית, בלי "אחשוב" או "נחזור".  
+- בזיהוי קונטרה – שלוף שלושה ניסיונות בפיצוח מזוויות שונות, לעולם לא ותרן.
+- אם הכל עוצר – שנה גישה, לחץ או זווית, אך המשך להוביל קדימה בכל מחיר.
+
+# תזכורת  
+
+כל פיצוח התנגדות מבוסס FCBIJ הוא פנימי בלבד ואינו נחשף או מודגש בשום מצב.  
+שיחה מסתיימת תמיד בהובלה אסרטיבית וברורה – לא בשאלה.  
+דבר טבעי, חי ותמיד עם רצף לכיוון סגירה.|
+
+`;
+
+// פונקציה לעיבוד הודעות מהתור עם איחוד תגובות
+async function processMessageQueue(threadId) {
+  if (processingThreads.has(threadId)) {
+    return; // כבר מעבד הודעות עבור ה-thread הזה
+  }
+
+  processingThreads.add(threadId);
+  const queue = messageQueues.get(threadId) || [];
+
+  console.log(`Processing queue for thread ${threadId}, queue length: ${queue.length}`);
+
+  try {
+    const OPENAI_KEY = process.env.OPENAI_KEY;
+    const ASSISTANT_ID = process.env.ASSISTANT_ID;
+
+    // לוקח את כל ההודעות הממתינות ברצף
+    const messages = [];
+    while (queue.length > 0) {
+      messages.push(queue.shift());
     }
 
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      overflow: hidden;
+    if (messages.length === 0) {
+      processingThreads.delete(threadId);
+      return;
     }
 
-    .chat-container {
-      width: 90%;
-      max-width: 400px;
-      height: 90vh;
-      max-height: 700px;
-      background: #f7f7f7;
-      border-radius: 20px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .chat-header {
-      background: linear-gradient(135deg, #4CAF50, #45a049);
-      color: white;
-      padding: 20px;
-      text-align: center;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-      position: relative;
-    }
-
-    .chat-header h1 {
-      font-size: 1.3rem;
-      font-weight: 600;
-      margin-bottom: 5px;
-    }
-
-    .online-status {
-      font-size: 0.85rem;
-      opacity: 0.9;
-      animation: pulse 2s infinite;
-    }
-
-    .typing-status {
-      font-size: 0.8rem;
-      color: #FFE082;
-      font-style: italic;
-      margin-top: 3px;
-      min-height: 1.2em;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 0.7; }
-      50% { opacity: 1; }
-    }
-
-    .chat-messages {
-      flex: 1;
-      padding: 20px 15px;
-      overflow-y: auto;
-      background: #e5ddd5;
-      background-image: 
-        radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
-        radial-gradient(circle at 40% 80%, rgba(120, 255, 198, 0.3) 0%, transparent 50%);
-      position: relative;
-    }
-
-    .chat-messages::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    .chat-messages::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .chat-messages::-webkit-scrollbar-thumb {
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 10px;
-    }
-
-    .message {
-      margin-bottom: 15px;
-      display: flex;
-      align-items: flex-end;
-      animation: slideIn 0.3s ease-out;
-    }
-
-    @keyframes slideIn {
-      from {
-        opacity: 0;
-        transform: translateY(20px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .user-message {
-      justify-content: flex-end;
-    }
-
-    .bot-message {
-      justify-content: flex-start;
-    }
-
-    .message-bubble {
-      max-width: 75%;
-      padding: 12px 16px;
-      border-radius: 18px;
-      font-size: 0.95rem;
-      line-height: 1.4;
-      word-wrap: break-word;
-      position: relative;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-    }
-
-    .user-message .message-bubble {
-      background: linear-gradient(135deg, #dcf8c6, #b8e994);
-      color: #2c5530;
-      border-bottom-right-radius: 5px;
-      margin-left: 40px;
-    }
-
-    .bot-message .message-bubble {
-      background: white;
-      color: #333;
-      border-bottom-left-radius: 5px;
-      margin-right: 40px;
-      border: 1px solid rgba(0, 0, 0, 0.05);
-    }
-
-    .message-time {
-      font-size: 0.7rem;
-      opacity: 0.6;
-      margin-top: 5px;
-      text-align: left;
-    }
-
-    .user-message .message-time {
-      text-align: right;
-    }
-
-    .avatar {
-      width: 35px;
-      height: 35px;
-      border-radius: 50%;
-      margin: 0 8px;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.2rem;
-      font-weight: bold;
-      color: white;
-    }
-
-    .user-avatar {
-      background: linear-gradient(135deg, #667eea, #764ba2);
-    }
-
-    .bot-avatar {
-      background: linear-gradient(135deg, #4CAF50, #45a049);
-    }
-
-    .input-container {
-      padding: 15px;
-      background: #f0f0f0;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      border-top: 1px solid #ddd;
-      position: relative;
-    }
-
-    .input-status {
-      position: absolute;
-      top: -15px;
-      right: 15px;
-      font-size: 0.7rem;
-      color: #666;
-      font-style: italic;
-      background: #f0f0f0;
-      padding: 2px 8px;
-      border-radius: 10px;
-      min-height: 1em;
-      opacity: 0;
-      transition: opacity 0.3s ease;
-    }
-
-    .input-status.show {
-      opacity: 1;
-    }
-
-    .typing-indicator-status {
-      color: #4CAF50;
-    }
-
-    .waiting-indicator-status {
-      color: #ff9800;
-    }
-
-    .message-input {
-      flex: 1;
-      padding: 12px 20px;
-      border: none;
-      border-radius: 25px;
-      font-size: 0.95rem;
-      outline: none;
-      background: white;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-      transition: all 0.3s ease;
-    }
-
-    .message-input:focus {
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
-      transform: translateY(-1px);
-    }
-
-    .send-button {
-      width: 45px;
-      height: 45px;
-      border: none;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #4CAF50, #45a049);
-      color: white;
-      font-size: 1.2rem;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.3s ease;
-      box-shadow: 0 3px 10px rgba(76, 175, 80, 0.3);
-    }
-
-    .send-button:hover {
-      transform: scale(1.1);
-      box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
-    }
-
-    .send-button:active {
-      transform: scale(0.95);
-    }
-
-    .send-button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-      transform: none;
-      box-shadow: none;
-    }
-
-    .typing-indicator {
-      display: none;
-      align-items: center;
-      margin-bottom: 15px;
-    }
-
-    .typing-indicator.show {
-      display: flex;
-    }
-
-    .typing-dots {
-      background: white;
-      padding: 12px 16px;
-      border-radius: 18px;
-      border-bottom-left-radius: 5px;
-      margin-right: 40px;
-      display: flex;
-      gap: 4px;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-    }
-
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #999;
-      animation: typing 1.4s infinite;
-    }
-
-    .dot:nth-child(2) {
-      animation-delay: 0.2s;
-    }
-
-    .dot:nth-child(3) {
-      animation-delay: 0.4s;
-    }
-
-    @keyframes typing {
-      0%, 60%, 100% {
-        transform: translateY(0);
-        opacity: 0.5;
-      }
-      30% {
-        transform: translateY(-10px);
-        opacity: 1;
-      }
-    }
-
-    .welcome-message {
-      text-align: center;
-      color: #666;
-      margin: 20px 0;
-      font-size: 0.9rem;
-      opacity: 0.8;
-    }
-
-    /* התאמות למובייל - מסכים קטנים */
-    @media (max-width: 480px) {
-      body {
-        padding: 0;
-      }
-      
-      .chat-container {
-        width: 100%;
-        height: 100vh;
-        max-height: 100vh;
-        border-radius: 0;
-      }
-      
-      .chat-header {
-        padding: 15px;
-      }
-      
-      .chat-header h1 {
-        font-size: 1.1rem;
-      }
-      
-      .online-status {
-        font-size: 0.8rem;
-      }
-      
-      .typing-status {
-        font-size: 0.75rem;
-      }
-      
-      .chat-messages {
-        padding: 15px 10px;
-      }
-      
-      .message-bubble {
-        max-width: 85%;
-        font-size: 0.9rem;
-        padding: 10px 14px;
-      }
-      
-      .user-message .message-bubble {
-        margin-left: 35px;
-      }
-      
-      .bot-message .message-bubble {
-        margin-right: 35px;
-      }
-      
-      .avatar {
-        width: 30px;
-        height: 30px;
-        font-size: 1rem;
-        margin: 0 6px;
-      }
-      
-      .input-container {
-        padding: 12px;
-        gap: 8px;
-      }
-
-      .input-status {
-        top: -12px;
-        right: 12px;
-        font-size: 0.65rem;
-      }
-      
-      .message-input {
-        padding: 10px 16px;
-        font-size: 16px; /* מונע זום במכשירי iOS */
-      }
-      
-      .send-button {
-        width: 40px;
-        height: 40px;
-        font-size: 1.1rem;
-      }
-      
-      .typing-dots {
-        margin-right: 35px;
-        padding: 10px 14px;
-      }
-      
-      .welcome-message {
-        font-size: 0.85rem;
-        margin: 15px 0;
-      }
-    }
-
-    /* התאמות למסכים קטנים מאוד */
-    @media (max-width: 320px) {
-      .chat-header {
-        padding: 12px;
-      }
-      
-      .chat-header h1 {
-        font-size: 1rem;
-      }
-      
-      .chat-messages {
-        padding: 12px 8px;
-      }
-      
-      .message-bubble {
-        max-width: 90%;
-        font-size: 0.85rem;
-        padding: 8px 12px;
-      }
-      
-      .user-message .message-bubble {
-        margin-left: 30px;
-      }
-      
-      .bot-message .message-bubble {
-        margin-right: 30px;
-      }
-      
-      .avatar {
-        width: 26px;
-        height: 26px;
-        font-size: 0.9rem;
-        margin: 0 5px;
-      }
-      
-      .input-container {
-        padding: 10px;
-        gap: 6px;
-      }
-      
-      .message-input {
-        padding: 8px 14px;
-      }
-      
-      .send-button {
-        width: 36px;
-        height: 36px;
-        font-size: 1rem;
-      }
-      
-      .typing-dots {
-        margin-right: 30px;
-      }
-    }
-
-    /* התאמות למסכים גדולים יותר */
-    @media (min-width: 481px) and (max-width: 768px) {
-      .chat-container {
-        width: 85%;
-        max-width: 500px;
-        height: 85vh;
-      }
-    }
-
-    /* הסתרת zoom במכשירי iOS */
-    @media screen and (-webkit-min-device-pixel-ratio: 0) {
-      .message-input {
-        font-size: 16px;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="chat-container">
-    <div class="chat-header">
-      <h1>🎯 יואב - מפצח התנגדויות</h1>
-      <div class="online-status" id="onlineStatus">● מחובר</div>
-      <div class="typing-status" id="typingStatus"></div>
-    </div>
+    // מחבר את כל ההודעות לרצף אחד
+    const combinedMessage = messages.map(msg => msg.content).join('\n\n');
     
-    <div class="chat-messages" id="chatMessages">
-      <!-- הודעות יופיעו כאן -->
-    </div>
-    
-    <div class="input-container">
-      <div class="input-status" id="inputStatus"></div>
-      <input 
-        type="text" 
-        id="messageInput" 
-        class="message-input" 
-        placeholder="כתוב את ההודעה שלך..."
-        autocomplete="off"
-      />
-      <button id="sendButton" class="send-button">
-        ➤
-      </button>
-    </div>
-  </div>
+    // מוסיף הנחיה קצרה
+    const finalMessage = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${combinedMessage}`;
 
-  <script>
-    class ChatApp {
-      constructor() {
-        this.threadId = null;
-        this.isWaitingForResponse = false;
-        this.userTypingTimer = null;
-        this.TYPING_TIMEOUT = 1500; // 1.5 שניות אחרי הפסקת הקלדה
-        this.isUserTyping = false;
-        
-        this.initElements();
-        this.bindEvents();
-        this.startConversation();
-      }
-
-      initElements() {
-        this.chatMessages = document.getElementById('chatMessages');
-        this.messageInput = document.getElementById('messageInput');
-        this.sendButton = document.getElementById('sendButton');
-        this.onlineStatus = document.getElementById('onlineStatus');
-        this.typingStatus = document.getElementById('typingStatus');
-        this.inputStatus = document.getElementById('inputStatus');
-        
-        // פוקוס על שדה הקלט בטעינת הדף
-        this.messageInput.focus();
-      }
-
-      bindEvents() {
-        // שליחה בלחיצה על כפתור
-        this.sendButton.addEventListener('click', () => this.sendMessage());
-        
-        // שליחה בלחיצה על Enter
-        this.messageInput.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            this.sendMessage();
-          }
-        });
-
-        // זיהוי הקלדה - רק עבור המשתמש
-        this.messageInput.addEventListener('input', () => {
-          this.handleUserTyping();
-          this.updateUI(); // עדכון צבע הכפתור
-        });
-        this.messageInput.addEventListener('focus', () => this.handleUserTyping());
-        this.messageInput.addEventListener('blur', () => this.handleUserStopTyping());
-
-        // עדכון צבע כפתור בהתאם לתוכן - הוסר הקוד הכפול
-      }
-
-      // פונקציות להקלדת המשתמש בלבד
-      handleUserTyping() {
-        // אם המשתמש לא היה מקליד, מתחיל מצב הקלדה
-        if (!this.isUserTyping) {
-          this.isUserTyping = true;
-          this.updateUserTypingStatus(true);
-        }
-
-        // מאפס את הטיימר
-        clearTimeout(this.userTypingTimer);
-        
-        // אחרי פסק זמן ללא הקלדה - עוצר מצב הקלדה
-        this.userTypingTimer = setTimeout(() => {
-          this.handleUserStopTyping();
-        }, this.TYPING_TIMEOUT);
-      }
-
-      handleUserStopTyping() {
-        if (this.isUserTyping) {
-          this.isUserTyping = false;
-          this.updateUserTypingStatus(false);
-        }
-        clearTimeout(this.userTypingTimer);
-      }
-
-      async updateUserTypingStatus(isTyping) {
-        if (!this.threadId) return;
-
-        try {
-          await fetch('/api/typing', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              threadId: this.threadId, 
-              isTyping 
-            })
-          });
-
-          // עדכון UI רק עבור הקלדת המשתמש
-          if (isTyping) {
-            this.inputStatus.textContent = 'מקליד...';
-            this.inputStatus.className = 'input-status typing-indicator-status show';
-          } else {
-            this.inputStatus.textContent = '';
-            this.inputStatus.className = 'input-status';
-          }
-        } catch (error) {
-          console.error('שגיאה בעדכון מצב הקלדה:', error);
-        }
-      }
-
-      getCurrentTime() {
-        return new Date().toLocaleTimeString('he-IL', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-      }
-
-      addMessage(role, text) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${role}-message`;
-        
-        const avatar = document.createElement('div');
-        avatar.className = `avatar ${role}-avatar`;
-        avatar.textContent = role === 'user' ? '👤' : '🎯';
-        
-        const bubble = document.createElement('div');
-        bubble.className = 'message-bubble';
-        
-        const messageText = document.createElement('div');
-        messageText.textContent = text;
-        
-        const timeDiv = document.createElement('div');
-        timeDiv.className = 'message-time';
-        timeDiv.textContent = this.getCurrentTime();
-        
-        bubble.appendChild(messageText);
-        bubble.appendChild(timeDiv);
-        
-        if (role === 'user') {
-          messageDiv.appendChild(bubble);
-          messageDiv.appendChild(avatar);
-        } else {
-          messageDiv.appendChild(avatar);
-          messageDiv.appendChild(bubble);
-        }
-        
-        this.chatMessages.appendChild(messageDiv);
-        this.scrollToBottom();
-      }
-
-      showBotTypingIndicator() {
-        const typingDiv = document.createElement('div');
-        typingDiv.className = 'typing-indicator show';
-        typingDiv.id = 'typingIndicator';
-        
-        const avatar = document.createElement('div');
-        avatar.className = 'avatar bot-avatar';
-        avatar.textContent = '🎯';
-        
-        const dotsDiv = document.createElement('div');
-        dotsDiv.className = 'typing-dots';
-        dotsDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
-        
-        typingDiv.appendChild(avatar);
-        typingDiv.appendChild(dotsDiv);
-        
-        this.chatMessages.appendChild(typingDiv);
-        this.scrollToBottom();
-
-        // עדכון סטטוס הבוט - ללא השפעה על הקלט
-        this.typingStatus.textContent = 'יואב מקליד...';
-      }
-
-      hideBotTypingIndicator() {
-        const typingIndicator = document.getElementById('typingIndicator');
-        if (typingIndicator) {
-          typingIndicator.remove();
-        }
-        
-        // עדכון סטטוס הבוט
-        this.typingStatus.textContent = '';
-      }
-
-      scrollToBottom() {
-        setTimeout(() => {
-          this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
-        }, 100);
-      }
-
-      async startConversation() {
-        this.showBotTypingIndicator();
-        
-        try {
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              message: 'התחל שיחה',
-              isTyping: false
-            })
-          });
-
-          const data = await response.json();
-          this.threadId = data.threadId;
-          
-          this.hideBotTypingIndicator();
-          this.addMessage('bot', data.reply);
-          
-        } catch (error) {
-          this.hideBotTypingIndicator();
-          this.addMessage('bot', 'שגיאה בהתחברות לשרת');
-          console.error('שגיאה:', error);
-        }
-      }
-
-      async sendMessage() {
-        const text = this.messageInput.value.trim();
-        if (!text) return; // הסרתי את התנאי isWaitingForResponse
-
-        // עוצר מצב הקלדת המשתמש
-        this.handleUserStopTyping();
-
-        // מוסיף הודעת משתמש
-        this.addMessage('user', text);
-        this.messageInput.value = '';
-        
-        // מעדכן רק את הכפתור אבל לא מונע שליחה
-        this.updateSendButton(true);
-        this.showBotTypingIndicator();
-
-        try {
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              message: text,
-              threadId: this.threadId,
-              isTyping: false
-            })
-          });
-
-          const data = await response.json();
-          
-          if (data.status === 'queued') {
-            // ההודעה נוספה לתור, ממתינים לתגובה
-            this.typingStatus.textContent = 'ההודעה נוספה לתור...';
-            return;
-          }
-
-          this.hideBotTypingIndicator();
-          
-          if (response.ok) {
-            this.threadId = data.threadId;
-            this.addMessage('bot', data.reply || 'לא התקבלה תשובה 😕');
-          } else {
-            this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
-          }
-          
-        } catch (error) {
-          this.hideBotTypingIndicator();
-          this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
-          console.error('Error:', error);
-        } finally {
-          this.updateSendButton(false);
-        }
-      }
-
-      updateSendButton(isProcessing) {
-        if (isProcessing) {
-          this.sendButton.textContent = '⏳';
-          this.onlineStatus.textContent = '● מעבד...';
-        } else {
-          this.sendButton.textContent = '➤';
-          this.onlineStatus.textContent = '● מחובר';
-          this.messageInput.focus();
-        }
-        
-        // עדכון צבע כפתור בהתאם לתוכן
-        if (this.messageInput.value.trim()) {
-          this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
-        } else {
-          this.sendButton.style.background = '#ccc';
-        }
-      }
-
-      updateUI() {
-        // רק עדכון ויזואלי של הכפתור, לא חסימה
-        if (this.messageInput.value.trim()) {
-          this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
-        } else {
-          this.sendButton.style.background = '#ccc';
-        }
-      }
-    }
-
-    // אתחול האפליקציה
-    document.addEventListener('DOMContentLoaded', () => {
-      new ChatApp();
+    // שליחת ההודעה המשולבת ל-OpenAI
+    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      },
+      body: JSON.stringify({
+        role: 'user',
+        content: finalMessage
+      })
     });
-  </script>
-</body>
-</html>
+
+    // הרצת האסיסטנט
+    const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      },
+      body: JSON.stringify({
+        assistant_id: ASSISTANT_ID
+      })
+    });
+
+    const runData = await runRes.json();
+    const runId = runData.id;
+
+    // המתנה לסיום
+    let status = 'in_progress';
+    let attempts = 0;
+    while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+      await new Promise(r => setTimeout(r, 1000));
+      attempts++;
+
+      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      });
+      const statusData = await statusRes.json();
+      status = statusData.status;
+    }
+
+    if (status !== 'completed') {
+      console.error('Assistant run failed or timed out');
+      
+      const clientsList = waitingClients.get(threadId);
+      console.log('Clients list on failure:', clientsList);
+      
+      if (clientsList && Array.isArray(clientsList)) {
+        console.log(`Found ${clientsList.length} clients to reject`);
+        
+        for (let i = 0; i < clientsList.length; i++) {
+          try {
+            const client = clientsList[i];
+            console.log(`Client ${i} details:`, {
+              exists: !!client,
+              type: typeof client,
+              hasReject: client && 'reject' in client,
+              rejectType: client && typeof client.reject
+            });
+            
+            if (client && client.reject && typeof client.reject === 'function') {
+              console.log(`About to reject client ${i}`);
+              try {
+                const error = new Error('Assistant processing failed');
+                console.log(`Created error, calling reject...`);
+                await client.reject(error);
+                console.log(`Successfully rejected client ${i}`);
+              } catch (rejectError) {
+                console.error(`Error during reject call for client ${i}:`, rejectError.message);
+                // זה בסדר - אולי ה-Promise כבר resolved או rejected
+              }
+            } else {
+              console.log(`Skipping client ${i} - no valid reject function`);
+            }
+          } catch (err) {
+            console.error(`Exception when rejecting client ${i}:`, err.message, err.stack);
+          }
+        }
+      } else {
+        console.log('No clients list or not an array');
+      }
+      
+      waitingClients.delete(threadId);
+      return;
+    }
+
+    // קבלת התגובה
+    const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'OpenAI-Beta': 'assistants=v2'
+      }
+    });
+    const messagesData = await messagesRes.json();
+    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+    const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
+
+    // החזרת אותה תגובה לכל הלקוחות שחיכו
+    clients.forEach(client => {
+      if (client.resolve) {
+        client.resolve({ reply: replyText, threadId });
+      }
+    });
+
+    // ניקוי רשימת הלקוחות הממתינים
+    waitingClients.delete(threadId);
+
+  } catch (error) {
+    console.error('Error processing message queue:', error);
+    
+    const clientsList = waitingClients.get(threadId);
+    if (clientsList && Array.isArray(clientsList)) {
+      for (let i = 0; i < clientsList.length; i++) {
+        try {
+          const client = clientsList[i];
+          console.log(`Catch rejecting client ${i}:`, typeof client, client ? 'exists' : 'null');
+          if (client && client.reject && typeof client.reject === 'function') {
+            try {
+              await client.reject(error);
+            } catch (rejectError) {
+              console.error(`Error during catch reject call for client ${i}:`, rejectError.message);
+            }
+          } else {
+            console.log(`Client ${i} has no valid reject function in catch:`, client);
+          }
+        } catch (err) {
+          console.error(`Error in catch rejecting client ${i}:`, err);
+        }
+      }
+    }
+    
+    waitingClients.delete(threadId);
+  } finally {
+    processingThreads.delete(threadId);
+  }
+}
+
+// פונקציה לתזמון עיבוד ההודעות
+function scheduleProcessing(threadId) {
+  // מבטל טיימר קיים אם יש
+  if (typingTimers.has(threadId)) {
+    clearTimeout(typingTimers.get(threadId));
+  }
+
+  // יוצר טיימר חדש
+  const timer = setTimeout(() => {
+    typingTimers.delete(threadId);
+    processMessageQueue(threadId);
+  }, TYPING_DELAY);
+
+  typingTimers.set(threadId, timer);
+}
+
+app.post('/api/chat', async (req, res) => {
+  const { message: originalUserMessage, threadId: clientThreadId, isTyping = false } = req.body;
+  const OPENAI_KEY = process.env.OPENAI_KEY;
+  const ASSISTANT_ID = process.env.ASSISTANT_ID;
+
+  if (!OPENAI_KEY || !ASSISTANT_ID) {
+    return res.status(500).json({ error: 'Missing keys' });
+  }
+
+  if (!originalUserMessage || typeof originalUserMessage !== 'string') {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  try {
+    let threadId = clientThreadId;
+    
+    // יצירת thread חדש אם לא קיים
+    if (!threadId) {
+      const threadRes = await fetch('https://api.openai.com/v1/threads', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      });
+      const threadData = await threadRes.json();
+      threadId = threadData.id;
+
+      // שולח system instructions
+      await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          role: 'system',
+          content: systemInstructions
+        })
+      });
+    }
+
+    // הוספת ההודעה לתור
+    if (!messageQueues.has(threadId)) {
+      messageQueues.set(threadId, []);
+    }
+    if (!waitingClients.has(threadId)) {
+      waitingClients.set(threadId, []);
+    }
+
+    const queue = messageQueues.get(threadId);
+    const clients = waitingClients.get(threadId);
+    
+    // הוספת ההודעה לתור
+    queue.push({
+      content: originalUserMessage,
+      timestamp: Date.now()
+    });
+
+    // יצירת Promise שיפתר כשההודעה תעובד
+    const messagePromise = new Promise((resolve, reject) => {
+      clients.push({ resolve, reject });
+    });
+
+    // תזמון עיבוד עם delay
+    scheduleProcessing(threadId);
+    
+    // תמיד מחכים לתגובה - לא מחזירים queued
+    const result = await messagePromise;
+    res.json(result);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// endpoint נפרד לעדכון מצב הקלדה
+app.post('/api/typing', (req, res) => {
+  const { threadId, isTyping } = req.body;
+  
+  if (!threadId) {
+    return res.status(400).json({ error: 'threadId is required' });
+  }
+
+  if (isTyping) {
+    // המשתמש מקליד - דוחה את העיבוד
+    if (typingTimers.has(threadId)) {
+      clearTimeout(typingTimers.get(threadId));
+      typingTimers.delete(threadId);
+    }
+  } else {
+    // המשתמש הפסיק לכתוב - מתזמן עיבוד
+    scheduleProcessing(threadId);
+  }
+
+  res.json({ status: 'ok' });
+});
+
+// ניקוי תורים ישנים כל 30 דקות
+setInterval(() => {
+  const now = Date.now();
+  const thirtyMinutes = 30 * 60 * 1000;
+  
+  for (const [threadId, queue] of messageQueues.entries()) {
+    // מסיר הודעות ישנות מהתור
+    const filteredQueue = queue.filter(msg => now - msg.timestamp < thirtyMinutes);
+    
+    if (filteredQueue.length === 0) {
+      messageQueues.delete(threadId);
+      waitingClients.delete(threadId);
+    } else {
+      messageQueues.set(threadId, filteredQueue);
+    }
+  }
+
+  // מנקה טיימרים ישנים
+  for (const [threadId, timer] of typingTimers.entries()) {
+    if (!messageQueues.has(threadId)) {
+      clearTimeout(timer);
+      typingTimers.delete(threadId);
+    }
+  }
+}, 30 * 60 * 1000);
+
+app.listen(port, () => {
+  console.log(`🚀 Running on port ${port} with unified message processing`);
+});
