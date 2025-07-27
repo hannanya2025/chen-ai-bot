@@ -1,5 +1,3 @@
-// index.js - שרת מאחד הודעות יציב
-
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -22,6 +20,7 @@ const messageQueues = new Map();
 const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimers = new Map();
+const typingStatus = new Map();
 const DELAY_TIME = 2000; // 2 שניות המתנה
 
 // הוראות קוד המפצח
@@ -49,255 +48,276 @@ const systemInstructions = `
 
 // פונקציה לעיבוד הודעות מאוחדות
 async function processMessages(threadId) {
-  if (processingThreads.has(threadId)) return;
-  
-  processingThreads.add(threadId);
-  console.log(`🔄 Processing messages for thread: ${threadId}`);
-  
-  try {
-    const OPENAI_KEY = process.env.OPENAI_KEY;
-    const ASSISTANT_ID = process.env.ASSISTANT_ID;
+    if (processingThreads.has(threadId)) return;
     
-    const queue = messageQueues.get(threadId) || [];
-    const clients = waitingClients.get(threadId) || [];
+    processingThreads.add(threadId);
+    console.log(`🔄 Processing messages for thread: ${threadId}`);
     
-    if (queue.length === 0 || clients.length === 0) {
-      processingThreads.delete(threadId);
-      return;
-    }
-    
-    // איחוד כל ההודעות בתור
-    const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
-    const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
-    console.log(`📝 Combined ${allMessages.length} messages`);
-    
-    // שליחת ההודעה המאוחדת
-    const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      },
-      body: JSON.stringify({
-        role: 'user',
-        content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
-      })
-    });
-    
-    if (!messageRes.ok) {
-      throw new Error('Failed to send message');
-    }
-    
-    // הרצת האסיסטנט
-    const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      },
-      body: JSON.stringify({
-        assistant_id: ASSISTANT_ID
-      })
-    });
-    
-    if (!runRes.ok) {
-      throw new Error('Failed to start run');
-    }
-    
-    const runData = await runRes.json();
-    const runId = runData.id;
-    
-    // המתנה לסיום
-    let status = 'in_progress';
-    let attempts = 0;
-    
-    while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
-      await new Promise(r => setTimeout(r, 1000));
-      attempts++;
-      
-      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'OpenAI-Beta': 'assistants=v2'
+    try {
+        const OPENAI_KEY = process.env.OPENAI_KEY;
+        const ASSISTANT_ID = process.env.ASSISTANT_ID;
+        
+        const queue = messageQueues.get(threadId) || [];
+        const clients = waitingClients.get(threadId) || [];
+        
+        if (queue.length === 0 || clients.length === 0) {
+            processingThreads.delete(threadId);
+            return;
         }
-      });
-      
-      if (!statusRes.ok) break;
-      
-      const statusData = await statusRes.json();
-      status = statusData.status;
-      
-      if (status === 'failed') {
-        throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
-      }
-    }
-    
-    if (status !== 'completed') {
-      throw new Error('Run timed out');
-    }
-    
-    // קבלת התגובה
-    const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'OpenAI-Beta': 'assistants=v2'
-      }
-    });
-    
-    if (!messagesRes.ok) {
-      throw new Error('Failed to fetch response');
-    }
-    
-    const messagesData = await messagesRes.json();
-    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
-    const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
-    
-    console.log(`✅ Sending response to ${clients.length} clients`);
-    
-    // שליחת התגובה לכל הלקוחות
-    const allClients = clients.splice(0); // לוקח את כל הלקוחות ומנקה
-    allClients.forEach(client => {
-      try {
-        if (client && client.resolve) {
-          client.resolve({ reply: replyText, threadId });
+        
+        // איחוד כל ההודעות בתור
+        const allMessages = queue.splice(0);
+        const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
+        console.log(`📝 Combined ${allMessages.length} messages`);
+        
+        // שליחת ההודעה המאוחדת
+        const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'Content-Type': 'application/json',
+                'OpenAI-Beta': 'assistants=v2'
+            },
+            body: JSON.stringify({
+                role: 'user',
+                content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
+            })
+        });
+        
+        if (!messageRes.ok) {
+            throw new Error('Failed to send message');
         }
-      } catch (err) {
-        console.error('Error resolving client:', err);
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Processing error:', error.message);
-    
-    // שליחת שגיאה לכל הלקוחות
-    const clients = waitingClients.get(threadId) || [];
-    const allClients = clients.splice(0);
-    allClients.forEach(client => {
-      try {
-        if (client && client.reject) {
-          client.reject(error);
+        
+        // הרצת האסיסטנט
+        const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'Content-Type': 'application/json',
+                'OpenAI-Beta': 'assistants=v2'
+            },
+            body: JSON.stringify({
+                assistant_id: ASSISTANT_ID
+            })
+        });
+        
+        if (!runRes.ok) {
+            throw new Error('Failed to start run');
         }
-      } catch (err) {
-        console.error('Error rejecting client:', err);
-      }
-    });
-    
-  } finally {
-    processingThreads.delete(threadId);
-    messageQueues.delete(threadId);
-    waitingClients.delete(threadId);
-  }
+        
+        const runData = await runRes.json();
+        const runId = runData.id;
+        
+        // המתנה לסיום
+        let status = 'in_progress';
+        let attempts = 0;
+        
+        while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+            await new Promise(r => setTimeout(r, 1000));
+            attempts++;
+            
+            const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_KEY}`,
+                    'OpenAI-Beta': 'assistants=v2'
+                }
+            });
+            
+            if (!statusRes.ok) break;
+            
+            const statusData = await statusRes.json();
+            status = statusData.status;
+            
+            if (status === 'failed') {
+                throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
+            }
+        }
+        
+        if (status !== 'completed') {
+            throw new Error('Run timed out');
+        }
+        
+        // קבלת התגובה
+        const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'OpenAI-Beta': 'assistants=v2'
+            }
+        });
+        
+        if (!messagesRes.ok) {
+            throw new Error('Failed to fetch response');
+        }
+        
+        const messagesData = await messagesRes.json();
+        const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+        const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
+        
+        console.log(`✅ Sending response to ${clients.length} clients`);
+        
+        // שליחת התגובה לכל הלקוחות
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            try {
+                if (client && client.resolve) {
+                    client.resolve({ reply: replyText, threadId });
+                }
+            } catch (err) {
+                console.error('Error resolving client:', err);
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Processing error:', error.message);
+        
+        // שליחת שגיאה לכל הלקוחות
+        const clients = waitingClients.get(threadId) || [];
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            try {
+                if (client && client.reject) {
+                    client.reject(error);
+                }
+            } catch (err) {
+                console.error('Error rejecting client:', err);
+            }
+        });
+        
+    } finally {
+        processingThreads.delete(threadId);
+        messageQueues.delete(threadId);
+        waitingClients.delete(threadId);
+        processTimers.delete(threadId);
+        typingStatus.delete(threadId);
+    }
 }
 
 // פונקציה לתזמון עיבוד
 function scheduleProcessing(threadId) {
-  // מבטל טיימר קיים
-  if (processTimers.has(threadId)) {
-    clearTimeout(processTimers.get(threadId));
-  }
-  
-  // יוצר טיימר חדש
-  const timer = setTimeout(() => {
-    processTimers.delete(threadId);
-    processMessages(threadId);
-  }, DELAY_TIME);
-  
-  processTimers.set(threadId, timer);
+    if (processTimers.has(threadId)) {
+        clearTimeout(processTimers.get(threadId));
+    }
+
+    const timer = setTimeout(async () => {
+        if (typingStatus.has(threadId)) {
+            const lastTyping = typingStatus.get(threadId);
+            const timeSinceTyping = Date.now() - lastTyping;
+            if (timeSinceTyping < 2000) {
+                scheduleProcessing(threadId);
+                return;
+            }
+        }
+        processTimers.delete(threadId);
+        await processMessages(threadId);
+    }, DELAY_TIME);
+    
+    processTimers.set(threadId, timer);
 }
 
-app.post('/api/chat', async (req, res) => {
-  const { message: originalUserMessage, threadId: clientThreadId } = req.body;
-  const OPENAI_KEY = process.env.OPENAI_KEY;
-  const ASSISTANT_ID = process.env.ASSISTANT_ID;
-
-  if (!OPENAI_KEY || !ASSISTANT_ID) {
-    return res.status(500).json({ error: 'Missing API keys' });
-  }
-
-  if (!originalUserMessage || typeof originalUserMessage !== 'string') {
-    return res.status(400).json({ error: 'Message is required' });
-  }
-
-  try {
-    let threadId = clientThreadId;
-    
-    // יצירת thread חדש אם לא קיים
+app.post('/api/typing', (req, res) => {
+    const { threadId } = req.body;
     if (!threadId) {
-      console.log('🔄 Creating new thread...');
-      const threadRes = await fetch('https://api.openai.com/v1/threads', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        }
-      });
-
-      if (!threadRes.ok) {
-        throw new Error('Failed to create thread');
-      }
-
-      const threadData = await threadRes.json();
-      threadId = threadData.id;
-      console.log('✅ Thread created:', threadId);
-
-      // שליחת system instructions
-      await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        },
-        body: JSON.stringify({
-          role: 'user',
-          content: systemInstructions
-        })
-      });
+        return res.status(400).json({ error: 'ThreadId is required' });
     }
-
-    // הכנת התורים אם לא קיימים
-    if (!messageQueues.has(threadId)) {
-      messageQueues.set(threadId, []);
-    }
-    if (!waitingClients.has(threadId)) {
-      waitingClients.set(threadId, []);
-    }
-
-    // הוספת ההודעה לתור
-    const queue = messageQueues.get(threadId);
-    const clients = waitingClients.get(threadId);
-    
-    queue.push({
-      content: originalUserMessage,
-      timestamp: Date.now()
-    });
-
-    // יצירת Promise לתגובה
-    const responsePromise = new Promise((resolve, reject) => {
-      clients.push({ resolve, reject });
-    });
-
-    // תזמון עיבוד
+    typingStatus.set(threadId, Date.now());
     scheduleProcessing(threadId);
-    console.log(`📨 Message queued for thread ${threadId}, total in queue: ${queue.length}`);
+    res.json({ status: 'typing received' });
+});
 
-    // המתנה לתגובה
-    const result = await responsePromise;
-    res.json(result);
+app.post('/api/typing-stop', (req, res) => {
+    const { threadId } = req.body;
+    if (!threadId) {
+        return res.status(400).json({ error: 'ThreadId is required' });
+    }
+    typingStatus.delete(threadId);
+    scheduleProcessing(threadId);
+    res.json({ status: 'typing stopped' });
+});
 
-  } catch (err) {
-    console.error('❌ Server error:', err);
-    res.status(500).json({ error: err.message || 'Server error' });
-  }
+app.post('/api/chat', async (req, res) => {
+    const { message: originalUserMessage, threadId: clientThreadId } = req.body;
+    const OPENAI_KEY = process.env.OPENAI_KEY;
+    const ASSISTANT_ID = process.env.ASSISTANT_ID;
+
+    if (!OPENAI_KEY || !ASSISTANT_ID) {
+        return res.status(500).json({ error: 'Missing API keys' });
+    }
+
+    if (!originalUserMessage || typeof originalUserMessage !== 'string') {
+        return res.status(400).json({ error: 'Message is required' });
+    }
+
+    try {
+        let threadId = clientThreadId;
+        
+        if (!threadId) {
+            console.log('🔄 Creating new thread...');
+            const threadRes = await fetch('https://api.openai.com/v1/threads', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                }
+            });
+
+            if (!threadRes.ok) {
+                throw new Error('Failed to create thread');
+            }
+
+            const threadData = await threadRes.json();
+            threadId = threadData.id;
+            console.log('✅ Thread created:', threadId);
+
+            await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                },
+                body: JSON.stringify({
+                    role: 'user',
+                    content: systemInstructions
+                })
+            });
+        }
+
+        if (!messageQueues.has(threadId)) {
+            messageQueues.set(threadId, []);
+        }
+        if (!waitingClients.has(threadId)) {
+            waitingClients.set(threadId, []);
+        }
+
+        const queue = messageQueues.get(threadId);
+        const clients = waitingClients.get(threadId);
+        
+        queue.push({
+            content: originalUserMessage,
+            timestamp: Date.now()
+        });
+
+        const responsePromise = new Promise((resolve, reject) => {
+            clients.push({ resolve, reject });
+        });
+
+        scheduleProcessing(threadId);
+        console.log(`📨 Message queued for thread ${threadId}, total in queue: ${queue.length}`);
+
+        const result = await responsePromise;
+        res.json(result);
+
+    } catch (err) {
+        console.error('❌ Server error:', err);
+        res.status(500).json({ error: err.message || 'Server error' });
+    }
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Running on port ${port} with message unification`);
-  console.log('Environment check:', {
-    hasOpenAIKey: !!process.env.OPENAI_KEY,
-    hasAssistantID: !!process.env.ASSISTANT_ID
-  });
+    console.log(`🚀 Running on port ${port} with message unification`);
+    console.log('Environment check:', {
+        hasOpenAIKey: !!process.env.OPENAI_KEY,
+        hasAssistantID: !!process.env.ASSISTANT_ID
+    });
 });
