@@ -373,28 +373,38 @@
             }
 
             async startConversation() {
-                this.showTypingIndicator();
+                // הודעת ברוכים הבאים מיידית
+                this.addMessage('bot', 'ברוכים הבאים! יואב כאן 🤖');
                 
-                try {
-                    const response = await fetch('/api/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            message: 'התחל שיחה'
-                        })
-                    });
+                // המתנה קצרה ואז הבוט "מקליד"
+                setTimeout(() => {
+                    this.showTypingIndicator();
+                    
+                    // שליחת הבקשה לשרת
+                    setTimeout(async () => {
+                        try {
+                            const response = await fetch('/api/chat', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ 
+                                    message: 'התחל שיחה'
+                                })
+                            });
 
-                    const data = await response.json();
-                    this.threadId = data.threadId;
+                            const data = await response.json();
+                            this.threadId = data.threadId;
+                            
+                            this.hideTypingIndicator();
+                            this.addMessage('bot', data.reply);
+                            
+                        } catch (error) {
+                            this.hideTypingIndicator();
+                            this.addMessage('bot', 'שגיאה בהתחברות לשרת');
+                            console.error('שגיאה:', error);
+                        }
+                    }, 1500); // המתנה של 1.5 שניות "הקלדה"
                     
-                    this.hideTypingIndicator();
-                    this.addMessage('bot', data.reply);
-                    
-                } catch (error) {
-                    this.hideTypingIndicator();
-                    this.addMessage('bot', 'שגיאה בהתחברות לשרת');
-                    console.error('שגיאה:', error);
-                }
+                }, 800); // המתנה של 0.8 שניות לפני שמתחיל להקליד
             }
 
             async sendMessage() {
