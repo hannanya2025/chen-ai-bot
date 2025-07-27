@@ -17,10 +17,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // תור הודעות ונתונים לכל thread
 const messageQueues = new Map();
-const processingThreads = new Set();
+const processingThreads = new Set(); // מעקב אחרי threads בעיבוד
 const waitingClients = new Map();
 const processTimers = new Map();
 const typingStatus = new Map();
+const activeRuns = new Map(); // מעקב אחרי ריצות פעילות לכל thread
 const DELAY_TIME = 3000; // 3 שניות המתנה
 
 // הוראות קוד המפצח
@@ -51,7 +52,7 @@ async function processMessages(threadId) {
     if (processingThreads.has(threadId)) return;
     
     processingThreads.add(threadId);
-    console.log(`🔄 Processing messages for thread: ${threadId}`);
+    console.log(`🔄 Starting processing for thread: ${threadId}`);
     
     try {
         const OPENAI_KEY = process.env.OPENAI_KEY;
@@ -65,116 +66,120 @@ async function processMessages(threadId) {
             return;
         }
 
-        // בדיקה חוזרת אם יש הודעות חדשות בתור לפני שליחה
-        let combinedMessage = '';
-        while (queue.length > 0) {
-            const allMessages = queue.splice(0); // לוקח את כל ההודעות הנוכחיות
-            combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
-            console.log(`📝 Combined ${allMessages.length} messages: ${combinedMessage}`);
+        // איחוד כל ההודעות בתור
+        const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
+        const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
+        console.log(`📝 Combined ${allMessages.length} messages: ${combinedMessage}`);
 
-            // שולח את ההודעה המאוחדת
-            const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_KEY}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                },
-                body: JSON.stringify({
-                    role: 'user',
-                    content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
-                })
-            });
+        // שליחת ההודעה המאוחדת
+        const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'Content-Type': 'application/json',
+                'OpenAI-Beta': 'assistants=v2'
+            },
+            body: JSON.stringify({
+                role: 'user',
+                content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
+            })
+        });
 
-            if (!messageRes.ok) {
-                throw new Error('Failed to send message');
-            }
+        if (!messageRes.ok) {
+            throw new Error('Failed to send message');
+        }
 
-            // הרצת האסיסטנט
-            const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_KEY}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                },
-                body: JSON.stringify({
-                    assistant_id: ASSISTANT_ID
-                })
-            });
+        // הרצת האסיסטנט
+        const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'Content-Type': 'application/json',
+                'OpenAI-Beta': 'assistants=v2'
+            },
+            body: JSON.stringify({
+                assistant_id: ASSISTANT_ID
+            })
+        });
 
-            if (!runRes.ok) {
-                throw new Error('Failed to start run');
-            }
+        if (!runRes.ok) {
+            throw new Error('Failed to start run');
+        }
 
-            const runData = await runRes.json();
-            const runId = runData.id;
+        const runData = await runRes.json();
+        const runId = runData.id;
+        activeRuns.set(threadId, runId); // רושם את הריצה הפעילה
 
-            // המתנה לסיום
-            let status = 'in_progress';
-            let attempts = 0;
+        // המתנה לסיום
+        let status = 'in_progress';
+        let attempts = 0;
 
-            while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
-                await new Promise(r => setTimeout(r, 1000));
-                attempts++;
+        while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+            await new Promise(r => setTimeout(r, 1000));
+            attempts++;
 
-                const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-                    headers: {
-                        'Authorization': `Bearer ${OPENAI_KEY}`,
-                        'OpenAI-Beta': 'assistants=v2'
-                    }
-                });
-
-                if (!statusRes.ok) break;
-
-                const statusData = await statusRes.json();
-                status = statusData.status;
-
-                if (status === 'failed') {
-                    throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
-                }
-
-                // בדיקה אם התווספו הודעות חדשות במהלך ההמתנה
-                if (messageQueues.get(threadId)?.length > 0) {
-                    break; // יוצא מהלולאה כדי לאחד שוב
-                }
-            }
-
-            if (status !== 'completed') {
-                throw new Error('Run timed out');
-            }
-
-            // קבלת התגובה הנוכחית
-            const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
                 headers: {
                     'Authorization': `Bearer ${OPENAI_KEY}`,
                     'OpenAI-Beta': 'assistants=v2'
                 }
             });
 
-            if (!messagesRes.ok) {
-                throw new Error('Failed to fetch response');
+            if (!statusRes.ok) break;
+
+            const statusData = await statusRes.json();
+            status = statusData.status;
+
+            if (status === 'failed') {
+                throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
             }
 
-            const messagesData = await messagesRes.json();
-            const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
-            const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
-
-            // אם אין הודעות חדשות בתור, שולח את התגובה
-            if (messageQueues.get(threadId)?.length === 0) {
-                console.log(`✅ Sending response to ${clients.length} clients: ${replyText}`);
-                const allClients = clients.splice(0);
-                allClients.forEach(client => {
-                    try {
-                        if (client && client.resolve) {
-                            client.resolve({ reply: replyText, threadId });
-                        }
-                    } catch (err) {
-                        console.error('Error resolving client:', err);
-                    }
-                });
+            // בדיקה אם התווספו הודעות חדשות במהלך ההמתנה
+            if (messageQueues.get(threadId)?.length > 0) {
+                // מבטל את הריצה הנוכחית אם אפשר (כרגע לא ניתן לבטל ישירות, אז ממתין לסיום)
+                console.log(`⚠️ New message detected, waiting to combine: ${threadId}`);
                 break;
             }
+        }
+
+        if (status !== 'completed') {
+            throw new Error('Run timed out');
+        }
+
+        // קבלת התגובה
+        const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            headers: {
+                'Authorization': `Bearer ${OPENAI_KEY}`,
+                'OpenAI-Beta': 'assistants=v2'
+            }
+        });
+
+        if (!messagesRes.ok) {
+            throw new Error('Failed to fetch response');
+        }
+
+        const messagesData = await messagesRes.json();
+        const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+        const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
+
+        // שליחת התגובה רק אם אין הודעות חדשות
+        if (messageQueues.get(threadId)?.length === 0) {
+            console.log(`✅ Sending response to ${clients.length} clients: ${replyText}`);
+            const allClients = clients.splice(0);
+            allClients.forEach(client => {
+                try {
+                    if (client && client.resolve) {
+                        client.resolve({ reply: replyText, threadId });
+                    }
+                } catch (err) {
+                    console.error('Error resolving client:', err);
+                }
+            });
+        } else {
+            console.log(`⏳ Delaying response due to new messages in queue: ${threadId}`);
+            // מוסיף את הלקוחות חזרה לתור אם יש הודעות חדשות
+            clients.push(...allClients);
+            scheduleProcessing(threadId); // ממשיך לעבד עם ההודעות החדשות
         }
 
     } catch (error) {
@@ -195,17 +200,18 @@ async function processMessages(threadId) {
         
     } finally {
         processingThreads.delete(threadId);
-        messageQueues.delete(threadId);
-        waitingClients.delete(threadId);
-        processTimers.delete(threadId);
-        typingStatus.delete(threadId);
+        activeRuns.delete(threadId); // מסיר את הריצה מהרשימה
+        if (messageQueues.get(threadId)?.length > 0) {
+            scheduleProcessing(threadId); // ממשיך לעבד אם יש הודעות נוספות
+        }
     }
 }
 
 // פונקציה לתזמון עיבוד משופרת
 function scheduleProcessing(threadId) {
-    if (processTimers.has(threadId)) {
-        clearTimeout(processTimers.get(threadId));
+    if (processTimers.has(threadId) || processingThreads.has(threadId) || activeRuns.has(threadId)) {
+        console.log(`⏳ Delaying processing for thread ${threadId} due to active run or timer`);
+        return; // דוחה את העיבוד אם יש ריצה או טיימר פעיל
     }
 
     const timer = setTimeout(async () => {
