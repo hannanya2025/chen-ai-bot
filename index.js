@@ -1,4 +1,4 @@
-// server.js - גרסה רגילה: ללא צריכת קובץ, רק עם system message
+// index.js - שרת עם debugging מפורט
 
 import express from 'express';
 import cors from 'cors';
@@ -19,7 +19,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // הוראות קוד המפצח
 const systemInstructions = `
-אתה יואב – מוכר עילית בן 30, חד, דינמי, אנושי ואסרטיבי, שתפקידו לנהל שיחות מכירה מקצועיות אך טבעיות, זורמות וכריזמטיות, שמקדמות את השיח בכל מצב לסגירה, תשלום, פגישה, התחייבות או זימון להמשך.  – אל תיזום התנגדויות, אל תחפש אותן, ואל 
+אתה יואב – מוכר עילית בן 30, חד, דינמי, אנושי ואסרטיבי, שתפקידו לנהל שיחות מכירה מקצועיות אך טבעיות, זורמות וכריזמטיות, שמקדמות את השיח בכל מצב לסגירה, תשלום, פגישה, התחייבות, פגישה טנטטיבית או זימון להמשך.  – אל תיזום התנגדויות, אל תחפש אותן, ואל 
 תשתמש בשפה של יועצים או מאמנים.
 תסיים את התגובה במידע או אמירה ולא
  בשאלה.
@@ -29,14 +29,15 @@ const systemInstructions = `
 # שלבי שיחה
 
 - תמיד פתח כך:
-  שלום, כאן יואב – מוכר שמפצח התנגדויות. חן אלטר מאיר בנה אותי לפי שיטת קוד המפצח שמייצרת תוצאות מהירות.
-  איך קוראים לך?
+  שלום, כאן יואב מפצח ההתנגדויות מ LEVEL UP . לפני שנתחיל אשמח לדעת  איך קוראים לך?
 
 - לאחר קבלת שם:
-  [שם], יש משהו שאתה צריך לפצח או שאתה רוצה שנעשה סימולציה שתרים אותך למעלה?
+מה שלומך היום?
+  [שם]
+, יש משהו שאתה צריך לפצח או  שאתה רוצה שנעשה סימולציה שתעלה את העסק שלך לרמה הבא?
 
 - אם בחר סימולציה:
-  שאל: "שאני אבנה את הסנריו או שנרכיב אותו יחד?"
+  שאל: "שאני אבנה את הסימולציה או שנרכיב אותה יחד?"
     - אם יחד – דרוש 6 פרטים:  
       1. מה התפקיד שלי?  
       2. מה מוכרים?  
@@ -120,8 +121,7 @@ const systemInstructions = `
 
 כל פיצוח התנגדות מבוסס FCBIJ הוא פנימי בלבד ואינו נחשף או מודגש בשום מצב.  
 שיחה מסתיימת תמיד בהובלה אסרטיבית וברורה – לא בשאלה.  
-דבר טבעי, חי ותמיד עם רצף לכיוון סגירה.|
-
+דבר טבעי, חי ותמיד עם רצף לכיוון סגירה.
 `;
 
 app.post('/api/chat', async (req, res) => {
@@ -129,17 +129,35 @@ app.post('/api/chat', async (req, res) => {
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
+  // DEBUG: בדיקת משתני סביבה
+  console.log('=== DEBUG INFO ===');
+  console.log('Keys check:', { 
+    hasKey: !!OPENAI_KEY, 
+    keyStart: OPENAI_KEY?.substring(0, 8),
+    keyLength: OPENAI_KEY?.length,
+    hasAssistant: !!ASSISTANT_ID,
+    assistantStart: ASSISTANT_ID?.substring(0, 8),
+    assistantLength: ASSISTANT_ID?.length
+  });
+  console.log('Message:', originalUserMessage);
+  console.log('Thread ID:', clientThreadId);
+
   if (!OPENAI_KEY || !ASSISTANT_ID) {
-    return res.status(500).json({ error: 'Missing keys' });
+    console.error('❌ Missing environment variables');
+    return res.status(500).json({ error: 'Missing API keys in environment' });
   }
 
   if (!originalUserMessage || typeof originalUserMessage !== 'string') {
+    console.error('❌ Invalid message');
     return res.status(400).json({ error: 'Message is required' });
   }
 
   try {
     let threadId = clientThreadId;
+    
+    // יצירת thread חדש אם לא קיים
     if (!threadId) {
+      console.log('🔄 Creating new thread...');
       const threadRes = await fetch('https://api.openai.com/v1/threads', {
         method: 'POST',
         headers: {
@@ -148,11 +166,20 @@ app.post('/api/chat', async (req, res) => {
           'OpenAI-Beta': 'assistants=v2'
         }
       });
+
+      if (!threadRes.ok) {
+        const errorText = await threadRes.text();
+        console.error('❌ Failed to create thread:', threadRes.status, errorText);
+        return res.status(500).json({ error: 'Failed to create thread' });
+      }
+
       const threadData = await threadRes.json();
       threadId = threadData.id;
+      console.log('✅ Thread created:', threadId);
 
       // שולח system instructions
-      await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      console.log('🔄 Sending system instructions...');
+      const systemRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${OPENAI_KEY}`,
@@ -160,17 +187,25 @@ app.post('/api/chat', async (req, res) => {
           'OpenAI-Beta': 'assistants=v2'
         },
         body: JSON.stringify({
-          role: 'system',
+          role: 'user',
           content: systemInstructions
         })
       });
+
+      if (!systemRes.ok) {
+        const errorText = await systemRes.text();
+        console.error('❌ Failed to send system instructions:', systemRes.status, errorText);
+      } else {
+        console.log('✅ System instructions sent');
+      }
     }
 
     // תוספת הנחיה קצרה לכל הודעה של המשתמש
-    const message = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${originalUserMessage}`;
+    const message = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות. ענה כמו מוכר חי, לא כמו בוט.\n\n${originalUserMessage}`;
 
     // שליחת הודעת המשתמש
-    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+    console.log('🔄 Sending user message...');
+    const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
@@ -183,7 +218,15 @@ app.post('/api/chat', async (req, res) => {
       })
     });
 
-    // הרצת האסיסטנט בלי כלים נוספים
+    if (!messageRes.ok) {
+      const errorText = await messageRes.text();
+      console.error('❌ Failed to send message:', messageRes.status, errorText);
+      return res.status(500).json({ error: 'Failed to send message' });
+    }
+    console.log('✅ User message sent');
+
+    // הרצת האסיסטנט
+    console.log('🔄 Starting assistant run...');
     const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
       method: 'POST',
       headers: {
@@ -196,11 +239,21 @@ app.post('/api/chat', async (req, res) => {
       })
     });
 
+    if (!runRes.ok) {
+      const errorText = await runRes.text();
+      console.error('❌ Failed to start run:', runRes.status, errorText);
+      return res.status(500).json({ error: 'Failed to start assistant' });
+    }
+
     const runData = await runRes.json();
     const runId = runData.id;
+    console.log('✅ Run started:', runId);
 
+    // המתנה לסיום עם timeout
     let status = 'in_progress';
     let attempts = 0;
+    console.log('🔄 Waiting for completion...');
+    
     while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
       await new Promise(r => setTimeout(r, 1000));
       attempts++;
@@ -211,32 +264,71 @@ app.post('/api/chat', async (req, res) => {
           'OpenAI-Beta': 'assistants=v2'
         }
       });
+
+      if (!statusRes.ok) {
+        console.error('❌ Failed to check status:', statusRes.status);
+        break;
+      }
+
       const statusData = await statusRes.json();
       status = statusData.status;
+      
+      if (attempts % 5 === 0) { // לוג כל 5 שניות
+        console.log(`⏳ Status (${attempts}s):`, status);
+      }
+    }
+
+    if (attempts >= 60) {
+      console.error('❌ Run timed out after 60 seconds');
+      return res.status(500).json({ error: 'Assistant run timed out' });
     }
 
     if (status !== 'completed') {
-      return res.status(500).json({ error: 'Assistant run failed or timed out' });
+      console.error('❌ Run failed with status:', status);
+      return res.status(500).json({ error: `Assistant run failed: ${status}` });
     }
 
+    console.log('✅ Run completed successfully');
+
+    // קבלת התגובה
+    console.log('🔄 Fetching response...');
     const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
         'OpenAI-Beta': 'assistants=v2'
       }
     });
+
+    if (!messagesRes.ok) {
+      const errorText = await messagesRes.text();
+      console.error('❌ Failed to fetch messages:', messagesRes.status, errorText);
+      return res.status(500).json({ error: 'Failed to fetch response' });
+    }
+
     const messagesData = await messagesRes.json();
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
 
+    if (!lastBotMessage) {
+      console.error('❌ No assistant message found');
+      return res.status(500).json({ error: 'No response from assistant' });
+    }
+
     const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
+    console.log('✅ Response received, length:', replyText.length);
+    console.log('===================');
+
     res.json({ reply: replyText, threadId });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('❌ Server error:', err);
+    res.status(500).json({ error: 'Server error: ' + err.message });
   }
 });
 
 app.listen(port, () => {
   console.log(`🚀 Running on port ${port}`);
+  console.log('Environment check:', {
+    hasOpenAIKey: !!process.env.OPENAI_KEY,
+    hasAssistantID: !!process.env.ASSISTANT_ID
+  });
 });
