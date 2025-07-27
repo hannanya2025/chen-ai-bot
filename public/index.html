@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Chen AI Bot</title>
+  <title>יואב - מפצח התנגדויות</title>
   <style>
     * {
       margin: 0;
@@ -36,7 +36,7 @@
     }
 
     .chat-header {
-      background: linear-gradient(135deg, #25d366, #128c7e);
+      background: linear-gradient(135deg, #4CAF50, #45a049);
       color: white;
       padding: 20px;
       text-align: center;
@@ -54,6 +54,13 @@
       font-size: 0.85rem;
       opacity: 0.9;
       animation: pulse 2s infinite;
+    }
+
+    .typing-status {
+      font-size: 0.8rem;
+      color: #FFE082;
+      font-style: italic;
+      margin-top: 3px;
     }
 
     @keyframes pulse {
@@ -168,7 +175,7 @@
     }
 
     .bot-avatar {
-      background: linear-gradient(135deg, #f093fb, #f5576c);
+      background: linear-gradient(135deg, #4CAF50, #45a049);
     }
 
     .input-container {
@@ -178,6 +185,27 @@
       align-items: center;
       gap: 10px;
       border-top: 1px solid #ddd;
+      position: relative;
+    }
+
+    .input-status {
+      position: absolute;
+      top: -15px;
+      right: 15px;
+      font-size: 0.7rem;
+      color: #666;
+      font-style: italic;
+      background: #f0f0f0;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .typing-indicator-status {
+      color: #4CAF50;
+    }
+
+    .waiting-indicator-status {
+      color: #ff9800;
     }
 
     .message-input {
@@ -202,7 +230,7 @@
       height: 45px;
       border: none;
       border-radius: 50%;
-      background: linear-gradient(135deg, #25d366, #128c7e);
+      background: linear-gradient(135deg, #4CAF50, #45a049);
       color: white;
       font-size: 1.2rem;
       cursor: pointer;
@@ -210,12 +238,12 @@
       align-items: center;
       justify-content: center;
       transition: all 0.3s ease;
-      box-shadow: 0 3px 10px rgba(37, 211, 102, 0.3);
+      box-shadow: 0 3px 10px rgba(76, 175, 80, 0.3);
     }
 
     .send-button:hover {
       transform: scale(1.1);
-      box-shadow: 0 5px 15px rgba(37, 211, 102, 0.4);
+      box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
     }
 
     .send-button:active {
@@ -310,6 +338,10 @@
         font-size: 0.8rem;
       }
       
+      .typing-status {
+        font-size: 0.75rem;
+      }
+      
       .chat-messages {
         padding: 15px 10px;
       }
@@ -338,6 +370,12 @@
       .input-container {
         padding: 12px;
         gap: 8px;
+      }
+
+      .input-status {
+        top: -12px;
+        right: 12px;
+        font-size: 0.65rem;
       }
       
       .message-input {
@@ -437,22 +475,22 @@
 <body>
   <div class="chat-container">
     <div class="chat-header">
-      <h1>🤖 חן - עוזר AI</h1>
-      <div class="online-status">● מחובר</div>
+      <h1>🎯 יואב - מפצח התנגדויות</h1>
+      <div class="online-status" id="onlineStatus">● מחובר</div>
+      <div class="typing-status" id="typingStatus"></div>
     </div>
     
     <div class="chat-messages" id="chatMessages">
-      <div class="welcome-message">
-        👋 שלום! אני כאן לעזור לך. מה ברצונך לשאול?
-      </div>
+      <!-- הודעות יופיעו כאן -->
     </div>
     
     <div class="input-container">
+      <div class="input-status" id="inputStatus"></div>
       <input 
         type="text" 
         id="messageInput" 
         class="message-input" 
-        placeholder="הקלד הודעה..."
+        placeholder="כתוב את ההודעה שלך..."
         autocomplete="off"
       />
       <button id="sendButton" class="send-button">
@@ -462,147 +500,298 @@
   </div>
 
   <script>
-    const chatMessages = document.getElementById('chatMessages');
-    const messageInput = document.getElementById('messageInput');
-    const sendButton = document.getElementById('sendButton');
-    let threadId = null;
-
-    // פוקוס על שדה הקלט בטעינת הדף
-    messageInput.focus();
-
-    function getCurrentTime() {
-      return new Date().toLocaleTimeString('he-IL', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-    }
-
-    function addMessage(role, text) {
-      const messageDiv = document.createElement('div');
-      messageDiv.className = `message ${role}-message`;
-      
-      const avatar = document.createElement('div');
-      avatar.className = `avatar ${role}-avatar`;
-      avatar.textContent = role === 'user' ? '👤' : '🤖';
-      
-      const bubble = document.createElement('div');
-      bubble.className = 'message-bubble';
-      
-      const messageText = document.createElement('div');
-      messageText.textContent = text;
-      
-      const timeDiv = document.createElement('div');
-      timeDiv.className = 'message-time';
-      timeDiv.textContent = getCurrentTime();
-      
-      bubble.appendChild(messageText);
-      bubble.appendChild(timeDiv);
-      
-      if (role === 'user') {
-        messageDiv.appendChild(bubble);
-        messageDiv.appendChild(avatar);
-      } else {
-        messageDiv.appendChild(avatar);
-        messageDiv.appendChild(bubble);
+    class ChatApp {
+      constructor() {
+        this.threadId = null;
+        this.isWaitingForResponse = false;
+        this.userTypingTimer = null;
+        this.TYPING_TIMEOUT = 1500; // 1.5 שניות אחרי הפסקת הקלדה
+        this.isUserTyping = false;
+        
+        this.initElements();
+        this.bindEvents();
+        this.startConversation();
       }
-      
-      chatMessages.appendChild(messageDiv);
-      scrollToBottom();
-    }
 
-    function showTypingIndicator() {
-      const typingDiv = document.createElement('div');
-      typingDiv.className = 'typing-indicator show';
-      typingDiv.id = 'typingIndicator';
-      
-      const avatar = document.createElement('div');
-      avatar.className = 'avatar bot-avatar';
-      avatar.textContent = '🤖';
-      
-      const dotsDiv = document.createElement('div');
-      dotsDiv.className = 'typing-dots';
-      dotsDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
-      
-      typingDiv.appendChild(avatar);
-      typingDiv.appendChild(dotsDiv);
-      
-      chatMessages.appendChild(typingDiv);
-      scrollToBottom();
-    }
-
-    function hideTypingIndicator() {
-      const typingIndicator = document.getElementById('typingIndicator');
-      if (typingIndicator) {
-        typingIndicator.remove();
+      initElements() {
+        this.chatMessages = document.getElementById('chatMessages');
+        this.messageInput = document.getElementById('messageInput');
+        this.sendButton = document.getElementById('sendButton');
+        this.onlineStatus = document.getElementById('onlineStatus');
+        this.typingStatus = document.getElementById('typingStatus');
+        this.inputStatus = document.getElementById('inputStatus');
+        
+        // פוקוס על שדה הקלט בטעינת הדף
+        this.messageInput.focus();
       }
-    }
 
-    function scrollToBottom() {
-      setTimeout(() => {
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-      }, 100);
-    }
-
-    async function sendMessage() {
-      const text = messageInput.value.trim();
-      if (!text) return;
-
-      addMessage('user', text);
-      messageInput.value = '';
-      sendButton.disabled = true;
-      showTypingIndicator();
-
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text, threadId })
+      bindEvents() {
+        // שליחה בלחיצה על כפתור
+        this.sendButton.addEventListener('click', () => this.sendMessage());
+        
+        // שליחה בלחיצה על Enter
+        this.messageInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            this.sendMessage();
+          }
         });
 
-        const data = await response.json();
-        
-        hideTypingIndicator();
-        
-        if (response.ok) {
-          threadId = data.threadId;
-          addMessage('bot', data.reply || 'לא התקבלה תשובה 😕');
-        } else {
-          addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
+        // זיהוי הקלדה
+        this.messageInput.addEventListener('input', () => this.handleTyping());
+        this.messageInput.addEventListener('focus', () => this.handleTyping());
+        this.messageInput.addEventListener('blur', () => this.handleStopTyping());
+
+        // מניעת איבוד פוקוס
+        this.messageInput.addEventListener('blur', () => {
+          setTimeout(() => {
+            this.messageInput.focus();
+          }, 100);
+        });
+
+        // אפקט ויזואלי לכפתור שליחה
+        this.messageInput.addEventListener('input', () => {
+          if (this.messageInput.value.trim()) {
+            this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
+          } else {
+            this.sendButton.style.background = '#ccc';
+          }
+        });
+      }
+
+      handleTyping() {
+        // אם המשתמש לא היה מקליד, מתחיל מצב הקלדה
+        if (!this.isUserTyping && !this.isWaitingForResponse) {
+          this.isUserTyping = true;
+          this.updateTypingStatus(true);
         }
-      } catch (error) {
-        hideTypingIndicator();
-        addMessage('bot', 'שגיאה בחיבור לשרת 😵');
-        console.error('Error:', error);
-      } finally {
-        sendButton.disabled = false;
-        messageInput.focus(); // החזרת הפוקוס לשדה הקלט
+
+        // מאפס את הטיימר
+        clearTimeout(this.userTypingTimer);
+        
+        // אחרי פסק זמן ללא הקלדה - עוצר מצב הקלדה
+        this.userTypingTimer = setTimeout(() => {
+          this.handleStopTyping();
+        }, this.TYPING_TIMEOUT);
+      }
+
+      handleStopTyping() {
+        if (this.isUserTyping) {
+          this.isUserTyping = false;
+          this.updateTypingStatus(false);
+        }
+        clearTimeout(this.userTypingTimer);
+      }
+
+      async updateTypingStatus(isTyping) {
+        if (!this.threadId) return;
+
+        try {
+          await fetch('/api/typing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              threadId: this.threadId, 
+              isTyping 
+            })
+          });
+
+          // עדכון UI
+          if (isTyping) {
+            this.typingStatus.textContent = 'מקליד...';
+            this.inputStatus.textContent = 'מקליד...';
+            this.inputStatus.className = 'input-status typing-indicator-status';
+          } else {
+            this.typingStatus.textContent = 'ממתין לתגובה...';
+            this.inputStatus.textContent = 'ממתין לתגובה...';
+            this.inputStatus.className = 'input-status waiting-indicator-status';
+          }
+        } catch (error) {
+          console.error('שגיאה בעדכון מצב הקלדה:', error);
+        }
+      }
+
+      getCurrentTime() {
+        return new Date().toLocaleTimeString('he-IL', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+      }
+
+      addMessage(role, text) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}-message`;
+        
+        const avatar = document.createElement('div');
+        avatar.className = `avatar ${role}-avatar`;
+        avatar.textContent = role === 'user' ? '👤' : '🎯';
+        
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        
+        const messageText = document.createElement('div');
+        messageText.textContent = text;
+        
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'message-time';
+        timeDiv.textContent = this.getCurrentTime();
+        
+        bubble.appendChild(messageText);
+        bubble.appendChild(timeDiv);
+        
+        if (role === 'user') {
+          messageDiv.appendChild(bubble);
+          messageDiv.appendChild(avatar);
+        } else {
+          messageDiv.appendChild(avatar);
+          messageDiv.appendChild(bubble);
+        }
+        
+        this.chatMessages.appendChild(messageDiv);
+        this.scrollToBottom();
+      }
+
+      showTypingIndicator() {
+        const typingDiv = document.createElement('div');
+        typingDiv.className = 'typing-indicator show';
+        typingDiv.id = 'typingIndicator';
+        
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar bot-avatar';
+        avatar.textContent = '🎯';
+        
+        const dotsDiv = document.createElement('div');
+        dotsDiv.className = 'typing-dots';
+        dotsDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+        
+        typingDiv.appendChild(avatar);
+        typingDiv.appendChild(dotsDiv);
+        
+        this.chatMessages.appendChild(typingDiv);
+        this.scrollToBottom();
+
+        // עדכון סטטוס
+        this.typingStatus.textContent = 'יואב מקליד...';
+        this.inputStatus.textContent = '';
+        this.inputStatus.className = 'input-status';
+      }
+
+      hideTypingIndicator() {
+        const typingIndicator = document.getElementById('typingIndicator');
+        if (typingIndicator) {
+          typingIndicator.remove();
+        }
+        
+        // עדכון סטטוס
+        this.typingStatus.textContent = '';
+        this.inputStatus.textContent = '';
+        this.inputStatus.className = 'input-status';
+      }
+
+      scrollToBottom() {
+        setTimeout(() => {
+          this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        }, 100);
+      }
+
+      async startConversation() {
+        this.showTypingIndicator();
+        
+        try {
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              message: 'התחל שיחה',
+              isTyping: false
+            })
+          });
+
+          const data = await response.json();
+          this.threadId = data.threadId;
+          
+          this.hideTypingIndicator();
+          this.addMessage('bot', data.reply);
+          
+        } catch (error) {
+          this.hideTypingIndicator();
+          this.addMessage('bot', 'שגיאה בהתחברות לשרת');
+          console.error('שגיאה:', error);
+        }
+      }
+
+      async sendMessage() {
+        const text = this.messageInput.value.trim();
+        if (!text || this.isWaitingForResponse) return;
+
+        // עוצר מצב הקלדה
+        this.handleStopTyping();
+
+        // מוסיף הודעת משתמש
+        this.addMessage('user', text);
+        this.messageInput.value = '';
+        
+        // מעדכן מצב
+        this.isWaitingForResponse = true;
+        this.updateUI();
+        this.showTypingIndicator();
+
+        try {
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              message: text,
+              threadId: this.threadId,
+              isTyping: false
+            })
+          });
+
+          const data = await response.json();
+          
+          if (data.status === 'queued') {
+            // ההודעה נוספה לתור, ממתינים לתגובה
+            this.typingStatus.textContent = 'ההודעה נוספה לתור...';
+            return;
+          }
+
+          this.hideTypingIndicator();
+          
+          if (response.ok) {
+            this.threadId = data.threadId;
+            this.addMessage('bot', data.reply || 'לא התקבלה תשובה 😕');
+          } else {
+            this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
+          }
+          
+        } catch (error) {
+          this.hideTypingIndicator();
+          this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
+          console.error('Error:', error);
+        } finally {
+          this.isWaitingForResponse = false;
+          this.updateUI();
+        }
+      }
+
+      updateUI() {
+        this.sendButton.disabled = this.isWaitingForResponse;
+        this.messageInput.disabled = this.isWaitingForResponse;
+        
+        if (this.isWaitingForResponse) {
+          this.sendButton.textContent = '⏳';
+          this.onlineStatus.textContent = '● מעבד...';
+        } else {
+          this.sendButton.textContent = '➤';
+          this.onlineStatus.textContent = '● מחובר';
+          this.messageInput.focus();
+        }
       }
     }
 
-    // אירועי לחיצה ומקלדת
-    sendButton.addEventListener('click', sendMessage);
-
-    messageInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-
-    // מניעת איבוד פוקוס
-    messageInput.addEventListener('blur', () => {
-      setTimeout(() => {
-        messageInput.focus();
-      }, 100);
-    });
-
-    // הוספת אפקט ויזואלי לקלט
-    messageInput.addEventListener('input', () => {
-      if (messageInput.value.trim()) {
-        sendButton.style.background = 'linear-gradient(135deg, #25d366, #128c7e)';
-      } else {
-        sendButton.style.background = '#ccc';
-      }
+    // אתחול האפליקציה
+    document.addEventListener('DOMContentLoaded', () => {
+      new ChatApp();
     });
   </script>
 </body>
