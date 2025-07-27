@@ -278,7 +278,7 @@
         class ChatApp {
             constructor() {
                 this.threadId = null;
-                this.typingTimer = null;
+                this.isWaitingForResponse = false;
                 
                 this.initElements();
                 this.bindEvents();
@@ -304,8 +304,7 @@
                 });
 
                 this.messageInput.addEventListener('input', () => {
-                    this.updateUI();
-                    this.notifyTyping();
+                    this.updateUI(); // עדכון צבע הכפתור
                 });
             }
 
@@ -373,42 +372,15 @@
                 }, 100);
             }
 
-            async notifyTyping() {
-                if (!this.threadId) return;
-
-                try {
-                    await fetch('/api/typing', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ threadId: this.threadId })
-                    });
-                } catch (error) {
-                    console.error('Error sending typing notification:', error);
-                }
-
-                if (this.typingTimer) {
-                    clearTimeout(this.typingTimer);
-                }
-
-                this.typingTimer = setTimeout(async () => {
-                    try {
-                        await fetch('/api/typing-stop', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ threadId: this.threadId })
-                        });
-                    } catch (error) {
-                        console.error('Error sending typing-stop notification:', error);
-                    }
-                }, 1000);
-            }
-
             async startConversation() {
-                this.addMessage('bot', 'ברוכים הבאים 🤖');
+                // הודעת ברוכים הבאים מיידית
+                this.addMessage('bot', 'ברוכים הבאים! יואב כאן 🤖');
                 
+                // המתנה קצרה ואז הבוט "מקליד"
                 setTimeout(() => {
                     this.showTypingIndicator();
                     
+                    // שליחת הבקשה לשרת
                     setTimeout(async () => {
                         try {
                             const response = await fetch('/api/chat', {
@@ -430,18 +402,19 @@
                             this.addMessage('bot', 'שגיאה בהתחברות לשרת');
                             console.error('שגיאה:', error);
                         }
-                    }, 1500);
+                    }, 1500); // המתנה של 1.5 שניות "הקלדה"
                     
-                }, 800);
+                }, 800); // המתנה של 0.8 שניות לפני שמתחיל להקליד
             }
 
             async sendMessage() {
                 const text = this.messageInput.value.trim();
-                if (!text) return;
+                if (!text) return; // הסרתי את התנאי isWaitingForResponse
 
                 this.addMessage('user', text);
                 this.messageInput.value = '';
                 
+                // מעדכן רק את הכפתור ויזואלית
                 this.updateSendButton(true);
                 this.showTypingIndicator();
 
@@ -483,6 +456,7 @@
                     this.messageInput.focus();
                 }
                 
+                // עדכון צבע כפתור
                 if (this.messageInput.value.trim()) {
                     this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
                 } else {
@@ -491,6 +465,7 @@
             }
 
             updateUI() {
+                // רק עדכון ויזואלי, לא חסימה
                 if (this.messageInput.value.trim()) {
                     this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
                 } else {
