@@ -43,7 +43,6 @@ async function processMessages(threadId) {
   }, MAX_PROCESS_TIME);
   processTimeouts.set(threadId, timeout);
 
-  // המתנה עד שהמשתמש יפסיק להקליד
   while (true) {
     const lastTyping = lastTypingTimeMap.get(threadId) || 0;
     const now = Date.now();
@@ -51,7 +50,6 @@ async function processMessages(threadId) {
     await new Promise(r => setTimeout(r, 500));
   }
 
-  // איחוד הודעות בתור
   const queue = messageQueues.get(threadId) || [];
   const clients = waitingClients.get(threadId) || [];
   if (!queue.length || !clients.length) {
@@ -136,9 +134,6 @@ async function processMessages(threadId) {
     if (retryData?.messages.length) {
       messageQueues.set(threadId, retryData.messages.splice(0));
       retryQueues.delete(threadId);
-      processMessages(threadId);
-    } else if ((messageQueues.get(threadId) || []).length > 0) {
-      processMessages(threadId);
     }
   }
 }
