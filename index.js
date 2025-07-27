@@ -1,4 +1,4 @@
-// server.js - גרסה רגילה: ללא צריכת קובץ, רק עם system message
+// server.js - עם תור הודעות לאפשר מספר הודעות ברצף
 
 import express from 'express';
 import cors from 'cors';
@@ -16,6 +16,10 @@ const __dirname = path.dirname(__filename);
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// תור הודעות לכל thread
+const messageQueues = new Map();
+const processingThreads = new Set();
 
 // הוראות קוד המפצח
 const systemInstructions = `
@@ -51,7 +55,7 @@ const systemInstructions = `
 # פיצוח התנגדויות – קוד FCBIJ (פנימי בלבד!)
 
 - פעל תמיד מתוך הקשבה; כאשר עולה התנגדות אמיתית (מחיר, זמן, חשש, קושי, היסוס), בצע מייד בראשך פיצוח תמונת FCBIJ:
-    - F – פחד: ממה הלקוח חושש? (ממני, מהמוצר, מעצמו, מהתחייבות וכו’)
+    - F – פחד: ממה הלקוח חושש? (ממני, מהמוצר, מעצמו, מהתחייבות וכו')
     - C – תודעה: מהי האמונה/הנחה המגבילה? (זה לא מתאים לי, זה לא הזמן)
     - B – חסם: מהו החסם המעשי? (כסף, זמן, קושי להחליט)
     - I – מוטיב פנימי: למה הוא באמת משתוקק? (שקט, שינוי, הצלחה)
@@ -124,6 +128,116 @@ const systemInstructions = `
 
 `;
 
+// פונקציה לעיבוד הודעות מהתור
+async function processMessageQueue(threadId) {
+  if (processingThreads.has(threadId)) {
+    return; // כבר מעבד הודעות עבור ה-thread הזה
+  }
+
+  processingThreads.add(threadId);
+  const queue = messageQueues.get(threadId) || [];
+
+  try {
+    const OPENAI_KEY = process.env.OPENAI_KEY;
+    const ASSISTANT_ID = process.env.ASSISTANT_ID;
+
+    while (queue.length > 0) {
+      const messages = [];
+      
+      // לוקח את כל ההודעות הממתינות ברצף
+      while (queue.length > 0) {
+        messages.push(queue.shift());
+      }
+
+      // מחבר את כל ההודעות לרצף אחד
+      const combinedMessage = messages.map(msg => msg.content).join('\n\n');
+      
+      // מוסיף הנחיה קצרה
+      const finalMessage = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${combinedMessage}`;
+
+      // שליחת ההודעה המשולבת ל-OpenAI
+      await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          role: 'user',
+          content: finalMessage
+        })
+      });
+
+      // הרצת האסיסטנט
+      const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          assistant_id: ASSISTANT_ID
+        })
+      });
+
+      const runData = await runRes.json();
+      const runId = runData.id;
+
+      // המתנה לסיום
+      let status = 'in_progress';
+      let attempts = 0;
+      while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+        await new Promise(r => setTimeout(r, 1000));
+        attempts++;
+
+        const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+          headers: {
+            'Authorization': `Bearer ${OPENAI_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
+        });
+        const statusData = await statusRes.json();
+        status = statusData.status;
+      }
+
+      if (status !== 'completed') {
+        console.error('Assistant run failed or timed out');
+        continue;
+      }
+
+      // קבלת התגובה
+      const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      });
+      const messagesData = await messagesRes.json();
+      const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+      const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
+
+      // שליחת התגובה לכל הלקוחות שחיכו
+      messages.forEach(msg => {
+        if (msg.resolve) {
+          msg.resolve({ reply: replyText, threadId });
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error processing message queue:', error);
+    // במקרה של שגיאה, מחזיר שגיאה לכל ההודעות הממתינות
+    queue.forEach(msg => {
+      if (msg.reject) {
+        msg.reject(error);
+      }
+    });
+  } finally {
+    processingThreads.delete(threadId);
+  }
+}
+
 app.post('/api/chat', async (req, res) => {
   const { message: originalUserMessage, threadId: clientThreadId } = req.body;
   const OPENAI_KEY = process.env.OPENAI_KEY;
@@ -139,6 +253,8 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     let threadId = clientThreadId;
+    
+    // יצירת thread חדש אם לא קיים
     if (!threadId) {
       const threadRes = await fetch('https://api.openai.com/v1/threads', {
         method: 'POST',
@@ -166,76 +282,52 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // תוספת הנחיה קצרה לכל הודעה של המשתמש
-    const message = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${originalUserMessage}`;
+    // הוספת ההודעה לתור
+    if (!messageQueues.has(threadId)) {
+      messageQueues.set(threadId, []);
+    }
 
-    // שליחת הודעת המשתמש
-    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      },
-      body: JSON.stringify({
-        role: 'user',
-        content: message
-      })
-    });
-
-    // הרצת האסיסטנט בלי כלים נוספים
-    const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      },
-      body: JSON.stringify({
-        assistant_id: ASSISTANT_ID
-      })
-    });
-
-    const runData = await runRes.json();
-    const runId = runData.id;
-
-    let status = 'in_progress';
-    let attempts = 0;
-    while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
-      await new Promise(r => setTimeout(r, 1000));
-      attempts++;
-
-      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'OpenAI-Beta': 'assistants=v2'
-        }
+    const queue = messageQueues.get(threadId);
+    
+    // יצירת Promise שיפתר כשההודעה תעובד
+    const messagePromise = new Promise((resolve, reject) => {
+      queue.push({
+        content: originalUserMessage,
+        timestamp: Date.now(),
+        resolve,
+        reject
       });
-      const statusData = await statusRes.json();
-      status = statusData.status;
-    }
-
-    if (status !== 'completed') {
-      return res.status(500).json({ error: 'Assistant run failed or timed out' });
-    }
-
-    const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'OpenAI-Beta': 'assistants=v2'
-      }
     });
-    const messagesData = await messagesRes.json();
-    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
 
-    const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
-    res.json({ reply: replyText, threadId });
+    // התחלת עיבוד התור (אם לא כבר רץ)
+    processMessageQueue(threadId);
+
+    // המתנה לתגובה
+    const result = await messagePromise;
+    res.json(result);
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// ניקוי תורים ישנים כל 30 דקות
+setInterval(() => {
+  const now = Date.now();
+  const thirtyMinutes = 30 * 60 * 1000;
+  
+  for (const [threadId, queue] of messageQueues.entries()) {
+    // מסיר הודעות ישנות מהתור
+    const filteredQueue = queue.filter(msg => now - msg.timestamp < thirtyMinutes);
+    
+    if (filteredQueue.length === 0) {
+      messageQueues.delete(threadId);
+    } else {
+      messageQueues.set(threadId, filteredQueue);
+    }
+  }
+}, 30 * 60 * 1000);
 
 app.listen(port, () => {
   console.log(`🚀 Running on port ${port}`);
