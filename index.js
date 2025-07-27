@@ -17,11 +17,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // תור הודעות ונתונים לכל thread
 const messageQueues = new Map();
-const processingThreads = new Set(); // מעקב אחרי threads בעיבוד
+const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimers = new Map();
 const typingStatus = new Map();
-const activeRuns = new Map(); // מעקב אחרי ריצות פעילות לכל thread
 const DELAY_TIME = 3000; // 3 שניות המתנה
 
 // הוראות קוד המפצח
@@ -52,7 +51,7 @@ async function processMessages(threadId) {
     if (processingThreads.has(threadId)) return;
     
     processingThreads.add(threadId);
-    console.log(`🔄 Starting processing for thread: ${threadId}`);
+    console.log(`🔄 Processing messages for thread: ${threadId}`);
     
     try {
         const OPENAI_KEY = process.env.OPENAI_KEY;
@@ -66,7 +65,18 @@ async function processMessages(threadId) {
             return;
         }
 
-        // איחוד כל ההודעות בתור
+        // ממתין עד שהתור יציב (אין הקלדה חדשה)
+        while (typingStatus.has(threadId)) {
+            const lastTyping = typingStatus.get(threadId);
+            const timeSinceTyping = Date.now() - lastTyping;
+            if (timeSinceTyping < DELAY_TIME) {
+                await new Promise(resolve => setTimeout(resolve, 500)); // המתנה קצרה
+                continue;
+            }
+            typingStatus.delete(threadId); // מסיים את מצב ההקלדה אם חלפו 3 שניות
+        }
+
+        // איחוד כל ההודעות בתור לאחר שהתור יציב
         const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
         const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
         console.log(`📝 Combined ${allMessages.length} messages: ${combinedMessage}`);
@@ -108,7 +118,6 @@ async function processMessages(threadId) {
 
         const runData = await runRes.json();
         const runId = runData.id;
-        activeRuns.set(threadId, runId); // רושם את הריצה הפעילה
 
         // המתנה לסיום
         let status = 'in_progress';
@@ -133,13 +142,6 @@ async function processMessages(threadId) {
             if (status === 'failed') {
                 throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
             }
-
-            // בדיקה אם התווספו הודעות חדשות במהלך ההמתנה
-            if (messageQueues.get(threadId)?.length > 0) {
-                // מבטל את הריצה הנוכחית אם אפשר (כרגע לא ניתן לבטל ישירות, אז ממתין לסיום)
-                console.log(`⚠️ New message detected, waiting to combine: ${threadId}`);
-                break;
-            }
         }
 
         if (status !== 'completed') {
@@ -162,25 +164,19 @@ async function processMessages(threadId) {
         const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
         const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-        // שליחת התגובה רק אם אין הודעות חדשות
-        if (messageQueues.get(threadId)?.length === 0) {
-            console.log(`✅ Sending response to ${clients.length} clients: ${replyText}`);
-            const allClients = clients.splice(0);
-            allClients.forEach(client => {
-                try {
-                    if (client && client.resolve) {
-                        client.resolve({ reply: replyText, threadId });
-                    }
-                } catch (err) {
-                    console.error('Error resolving client:', err);
+        console.log(`✅ Sending response to ${clients.length} clients: ${replyText}`);
+        
+        // שליחת התגובה לכל הלקוחות
+        const allClients = clients.splice(0);
+        allClients.forEach(client => {
+            try {
+                if (client && client.resolve) {
+                    client.resolve({ reply: replyText, threadId });
                 }
-            });
-        } else {
-            console.log(`⏳ Delaying response due to new messages in queue: ${threadId}`);
-            // מוסיף את הלקוחות חזרה לתור אם יש הודעות חדשות
-            clients.push(...allClients);
-            scheduleProcessing(threadId); // ממשיך לעבד עם ההודעות החדשות
-        }
+            } catch (err) {
+                console.error('Error resolving client:', err);
+            }
+        });
 
     } catch (error) {
         console.error('❌ Processing error:', error.message);
@@ -200,18 +196,14 @@ async function processMessages(threadId) {
         
     } finally {
         processingThreads.delete(threadId);
-        activeRuns.delete(threadId); // מסיר את הריצה מהרשימה
-        if (messageQueues.get(threadId)?.length > 0) {
-            scheduleProcessing(threadId); // ממשיך לעבד אם יש הודעות נוספות
-        }
     }
 }
 
 // פונקציה לתזמון עיבוד משופרת
 function scheduleProcessing(threadId) {
-    if (processTimers.has(threadId) || processingThreads.has(threadId) || activeRuns.has(threadId)) {
-        console.log(`⏳ Delaying processing for thread ${threadId} due to active run or timer`);
-        return; // דוחה את העיבוד אם יש ריצה או טיימר פעיל
+    if (processTimers.has(threadId) || processingThreads.has(threadId)) {
+        console.log(`⏳ Delaying processing for thread ${threadId} due to active process`);
+        return; // דוחה את העיבוד אם כבר בעיבוד
     }
 
     const timer = setTimeout(async () => {
