@@ -214,14 +214,17 @@ async function processMessageQueue(threadId) {
       console.error('Assistant run failed or timed out');
       // שליחת שגיאה לכל הלקוחות
       try {
-        const clientsArray = waitingClients.get(threadId);
-        if (clientsArray && Array.isArray(clientsArray) && clientsArray.length > 0) {
-          for (let i = 0; i < clientsArray.length; i++) {
-            const client = clientsArray[i];
-            if (client && typeof client.reject === 'function') {
-              client.reject(new Error('Assistant processing failed'));
+        const clientsList = waitingClients.get(threadId);
+        if (clientsList && Array.isArray(clientsList)) {
+          clientsList.forEach(client => {
+            try {
+              if (client && client.reject && typeof client.reject === 'function') {
+                client.reject(new Error('Assistant processing failed'));
+              }
+            } catch (clientErr) {
+              console.error('Error rejecting client:', clientErr);
             }
-          }
+          });
         }
       } catch (errorClientError) {
         console.error('Error rejecting clients:', errorClientError);
@@ -255,14 +258,17 @@ async function processMessageQueue(threadId) {
     console.error('Error processing message queue:', error);
     // במקרה של שגיאה, מחזיר שגיאה לכל הלקוחות הממתינים
     try {
-      const clientsArray = waitingClients.get(threadId);
-      if (clientsArray && Array.isArray(clientsArray) && clientsArray.length > 0) {
-        for (let i = 0; i < clientsArray.length; i++) {
-          const client = clientsArray[i];
-          if (client && typeof client.reject === 'function') {
-            client.reject(error);
+      const clientsList = waitingClients.get(threadId);
+      if (clientsList && Array.isArray(clientsList)) {
+        clientsList.forEach(client => {
+          try {
+            if (client && client.reject && typeof client.reject === 'function') {
+              client.reject(error);
+            }
+          } catch (clientErr) {
+            console.error('Error in catch rejecting client:', clientErr);
           }
-        }
+        });
       }
     } catch (catchClientError) {
       console.error('Error in catch block processing clients:', catchClientError);
