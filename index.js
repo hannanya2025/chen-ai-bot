@@ -1,4 +1,4 @@
-// server.js - עם תור הודעות וזיהוי מצב הקלדה
+// server.js - עם איחוד הודעות ותגובה אחת
 
 import express from 'express';
 import cors from 'cors';
@@ -20,7 +20,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 // תור הודעות וטיימרים לכל thread
 const messageQueues = new Map();
 const processingThreads = new Set();
-const typingTimers = new Map(); // טיימרים להמתנה
+const typingTimers = new Map();
+const waitingClients = new Map(); // לשמירת כל הלקוחות שמחכים לאותו thread
 const TYPING_DELAY = 3000; // 3 שניות המתנה לאחר הודעה אחרונה
 
 // הוראות קוד המפצח
@@ -130,7 +131,7 @@ const systemInstructions = `
 
 `;
 
-// פונקציה לעיבוד הודעות מהתור עם delay
+// פונקציה לעיבוד הודעות מהתור עם איחוד תגובות
 async function processMessageQueue(threadId) {
   if (processingThreads.has(threadId)) {
     return; // כבר מעבד הודעות עבור ה-thread הזה
@@ -138,103 +139,117 @@ async function processMessageQueue(threadId) {
 
   processingThreads.add(threadId);
   const queue = messageQueues.get(threadId) || [];
+  const clients = waitingClients.get(threadId) || [];
 
   try {
     const OPENAI_KEY = process.env.OPENAI_KEY;
     const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-    while (queue.length > 0) {
-      const messages = [];
-      
-      // לוקח את כל ההודעות הממתינות ברצף
-      while (queue.length > 0) {
-        messages.push(queue.shift());
-      }
-
-      // מחבר את כל ההודעות לרצף אחד
-      const combinedMessage = messages.map(msg => msg.content).join('\n\n');
-      
-      // מוסיף הנחיה קצרה
-      const finalMessage = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${combinedMessage}`;
-
-      // שליחת ההודעה המשולבת ל-OpenAI
-      await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        },
-        body: JSON.stringify({
-          role: 'user',
-          content: finalMessage
-        })
-      });
-
-      // הרצת האסיסטנט
-      const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        },
-        body: JSON.stringify({
-          assistant_id: ASSISTANT_ID
-        })
-      });
-
-      const runData = await runRes.json();
-      const runId = runData.id;
-
-      // המתנה לסיום
-      let status = 'in_progress';
-      let attempts = 0;
-      while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
-        await new Promise(r => setTimeout(r, 1000));
-        attempts++;
-
-        const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-          headers: {
-            'Authorization': `Bearer ${OPENAI_KEY}`,
-            'OpenAI-Beta': 'assistants=v2'
-          }
-        });
-        const statusData = await statusRes.json();
-        status = statusData.status;
-      }
-
-      if (status !== 'completed') {
-        console.error('Assistant run failed or timed out');
-        continue;
-      }
-
-      // קבלת התגובה
-      const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'OpenAI-Beta': 'assistants=v2'
-        }
-      });
-      const messagesData = await messagesRes.json();
-      const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
-      const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
-
-      // שליחת התגובה לכל הלקוחות שחיכו
-      messages.forEach(msg => {
-        if (msg.resolve) {
-          msg.resolve({ reply: replyText, threadId });
-        }
-      });
+    if (queue.length === 0) {
+      processingThreads.delete(threadId);
+      return;
     }
-  } catch (error) {
-    console.error('Error processing message queue:', error);
-    // במקרה של שגיאה, מחזיר שגיאה לכל ההודעות הממתינות
-    queue.forEach(msg => {
-      if (msg.reject) {
-        msg.reject(error);
+
+    // לוקח את כל ההודעות הממתינות ברצף
+    const messages = [];
+    while (queue.length > 0) {
+      messages.push(queue.shift());
+    }
+
+    // מחבר את כל ההודעות לרצף אחד
+    const combinedMessage = messages.map(msg => msg.content).join('\n\n');
+    
+    // מוסיף הנחיה קצרה
+    const finalMessage = `זכור: אתה יואב – איש מכירות שמפצח התנגדויות לפי שיטת קוד המפצח. ענה כמו מוכר חי, לא כמו בוט. תנתח לפי FCBIJ ותגיב בהתאם.\n\n${combinedMessage}`;
+
+    // שליחת ההודעה המשולבת ל-OpenAI
+    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      },
+      body: JSON.stringify({
+        role: 'user',
+        content: finalMessage
+      })
+    });
+
+    // הרצת האסיסטנט
+    const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      },
+      body: JSON.stringify({
+        assistant_id: ASSISTANT_ID
+      })
+    });
+
+    const runData = await runRes.json();
+    const runId = runData.id;
+
+    // המתנה לסיום
+    let status = 'in_progress';
+    let attempts = 0;
+    while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+      await new Promise(r => setTimeout(r, 1000));
+      attempts++;
+
+      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      });
+      const statusData = await statusRes.json();
+      status = statusData.status;
+    }
+
+    if (status !== 'completed') {
+      console.error('Assistant run failed or timed out');
+      // שליחת שגיאה לכל הלקוחות
+      clients.forEach(client => {
+        if (client.reject) {
+          client.reject(new Error('Assistant processing failed'));
+        }
+      });
+      return;
+    }
+
+    // קבלת התגובה
+    const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'OpenAI-Beta': 'assistants=v2'
       }
     });
+    const messagesData = await messagesRes.json();
+    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+    const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
+
+    // החזרת אותה תגובה לכל הלקוחות שחיכו
+    clients.forEach(client => {
+      if (client.resolve) {
+        client.resolve({ reply: replyText, threadId });
+      }
+    });
+
+    // ניקוי רשימת הלקוחות הממתינים
+    waitingClients.delete(threadId);
+
+  } catch (error) {
+    console.error('Error processing message queue:', error);
+    // במקרה של שגיאה, מחזיר שגיאה לכל הלקוחות הממתינים
+    clients.forEach(client => {
+      if (client.reject) {
+        client.reject(error);
+      }
+    });
+    waitingClients.delete(threadId);
   } finally {
     processingThreads.delete(threadId);
   }
@@ -304,17 +319,22 @@ app.post('/api/chat', async (req, res) => {
     if (!messageQueues.has(threadId)) {
       messageQueues.set(threadId, []);
     }
+    if (!waitingClients.has(threadId)) {
+      waitingClients.set(threadId, []);
+    }
 
     const queue = messageQueues.get(threadId);
+    const clients = waitingClients.get(threadId);
     
+    // הוספת ההודעה לתור
+    queue.push({
+      content: originalUserMessage,
+      timestamp: Date.now()
+    });
+
     // יצירת Promise שיפתר כשההודעה תעובד
     const messagePromise = new Promise((resolve, reject) => {
-      queue.push({
-        content: originalUserMessage,
-        timestamp: Date.now(),
-        resolve,
-        reject
-      });
+      clients.push({ resolve, reject });
     });
 
     // תזמון עיבוד עם delay (אלא אם זה דחוף)
@@ -373,6 +393,7 @@ setInterval(() => {
     
     if (filteredQueue.length === 0) {
       messageQueues.delete(threadId);
+      waitingClients.delete(threadId);
     } else {
       messageQueues.set(threadId, filteredQueue);
     }
@@ -388,5 +409,5 @@ setInterval(() => {
 }, 30 * 60 * 1000);
 
 app.listen(port, () => {
-  console.log(`🚀 Running on port ${port} with smart typing detection`);
+  console.log(`🚀 Running on port ${port} with unified message processing`);
 });
