@@ -21,7 +21,7 @@ const processingThreads = new Set();
 const waitingClients = new Map();
 const processTimers = new Map();
 const typingStatus = new Map();
-const DELAY_TIME = 2000; // 2 שניות המתנה
+const DELAY_TIME = 3000; // 3 שניות המתנה
 
 // הוראות קוד המפצח
 const systemInstructions = `
@@ -64,109 +64,119 @@ async function processMessages(threadId) {
             processingThreads.delete(threadId);
             return;
         }
-        
-        // איחוד כל ההודעות בתור
-        const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
-        const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
-        console.log(`📝 Combined ${allMessages.length} messages`);
-        
-        // שליחת ההודעה המאוחדת
-        const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${OPENAI_KEY}`,
-                'Content-Type': 'application/json',
-                'OpenAI-Beta': 'assistants=v2'
-            },
-            body: JSON.stringify({
-                role: 'user',
-                content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
-            })
-        });
-        
-        if (!messageRes.ok) {
-            throw new Error('Failed to send message');
-        }
-        
-        // הרצת האסיסטנט
-        const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${OPENAI_KEY}`,
-                'Content-Type': 'application/json',
-                'OpenAI-Beta': 'assistants=v2'
-            },
-            body: JSON.stringify({
-                assistant_id: ASSISTANT_ID
-            })
-        });
-        
-        if (!runRes.ok) {
-            throw new Error('Failed to start run');
-        }
-        
-        const runData = await runRes.json();
-        const runId = runData.id;
-        
-        // המתנה לסיום
-        let status = 'in_progress';
-        let attempts = 0;
-        
-        while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
-            await new Promise(r => setTimeout(r, 1000));
-            attempts++;
-            
-            const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+
+        // בדיקה חוזרת אם יש הודעות חדשות בתור לפני שליחה
+        let combinedMessage = '';
+        while (queue.length > 0) {
+            const allMessages = queue.splice(0); // לוקח את כל ההודעות הנוכחיות
+            combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
+            console.log(`📝 Combined ${allMessages.length} messages: ${combinedMessage}`);
+
+            // שולח את ההודעה המאוחדת
+            const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                },
+                body: JSON.stringify({
+                    role: 'user',
+                    content: `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combinedMessage}`
+                })
+            });
+
+            if (!messageRes.ok) {
+                throw new Error('Failed to send message');
+            }
+
+            // הרצת האסיסטנט
+            const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                },
+                body: JSON.stringify({
+                    assistant_id: ASSISTANT_ID
+                })
+            });
+
+            if (!runRes.ok) {
+                throw new Error('Failed to start run');
+            }
+
+            const runData = await runRes.json();
+            const runId = runData.id;
+
+            // המתנה לסיום
+            let status = 'in_progress';
+            let attempts = 0;
+
+            while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
+                await new Promise(r => setTimeout(r, 1000));
+                attempts++;
+
+                const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${OPENAI_KEY}`,
+                        'OpenAI-Beta': 'assistants=v2'
+                    }
+                });
+
+                if (!statusRes.ok) break;
+
+                const statusData = await statusRes.json();
+                status = statusData.status;
+
+                if (status === 'failed') {
+                    throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
+                }
+
+                // בדיקה אם התווספו הודעות חדשות במהלך ההמתנה
+                if (messageQueues.get(threadId)?.length > 0) {
+                    break; // יוצא מהלולאה כדי לאחד שוב
+                }
+            }
+
+            if (status !== 'completed') {
+                throw new Error('Run timed out');
+            }
+
+            // קבלת התגובה הנוכחית
+            const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
                 headers: {
                     'Authorization': `Bearer ${OPENAI_KEY}`,
                     'OpenAI-Beta': 'assistants=v2'
                 }
             });
-            
-            if (!statusRes.ok) break;
-            
-            const statusData = await statusRes.json();
-            status = statusData.status;
-            
-            if (status === 'failed') {
-                throw new Error(`Run failed: ${statusData.last_error?.message || 'Unknown error'}`);
+
+            if (!messagesRes.ok) {
+                throw new Error('Failed to fetch response');
+            }
+
+            const messagesData = await messagesRes.json();
+            const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
+            const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
+
+            // אם אין הודעות חדשות בתור, שולח את התגובה
+            if (messageQueues.get(threadId)?.length === 0) {
+                console.log(`✅ Sending response to ${clients.length} clients: ${replyText}`);
+                const allClients = clients.splice(0);
+                allClients.forEach(client => {
+                    try {
+                        if (client && client.resolve) {
+                            client.resolve({ reply: replyText, threadId });
+                        }
+                    } catch (err) {
+                        console.error('Error resolving client:', err);
+                    }
+                });
+                break;
             }
         }
-        
-        if (status !== 'completed') {
-            throw new Error('Run timed out');
-        }
-        
-        // קבלת התגובה
-        const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-            headers: {
-                'Authorization': `Bearer ${OPENAI_KEY}`,
-                'OpenAI-Beta': 'assistants=v2'
-            }
-        });
-        
-        if (!messagesRes.ok) {
-            throw new Error('Failed to fetch response');
-        }
-        
-        const messagesData = await messagesRes.json();
-        const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
-        const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
-        
-        console.log(`✅ Sending response to ${clients.length} clients`);
-        
-        // שליחת התגובה לכל הלקוחות
-        const allClients = clients.splice(0);
-        allClients.forEach(client => {
-            try {
-                if (client && client.resolve) {
-                    client.resolve({ reply: replyText, threadId });
-                }
-            } catch (err) {
-                console.error('Error resolving client:', err);
-            }
-        });
-        
+
     } catch (error) {
         console.error('❌ Processing error:', error.message);
         
@@ -199,7 +209,6 @@ function scheduleProcessing(threadId) {
     }
 
     const timer = setTimeout(async () => {
-        // בדוק אם יש הודעות בתור או שהמשתמש עדיין מקליד
         const queue = messageQueues.get(threadId) || [];
         if (typingStatus.has(threadId)) {
             const lastTyping = typingStatus.get(threadId);
