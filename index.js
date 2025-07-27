@@ -1,4 +1,4 @@
-// index.js – גרסה מלאה עם סנכרון הקלדה חכם ואיחוד הודעות לפי פעילות המשתמש
+// index.js – שרת מתקדם עם סנכרון הקלדה חכם ואיחוד הודעות
 
 import express from 'express';
 import cors from 'cors';
@@ -10,71 +10,126 @@ import 'dotenv/config';
 const app = express();
 const port = process.env.PORT || 10000;
 
-const _filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(_filename);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// מפות לניהול הודעות והקלדה
 const messageQueues = new Map();
 const waitingClients = new Map();
 const processingThreads = new Set();
 const processTimeouts = new Map();
 const lastTypingTimeMap = new Map();
 
-const MAX_PROCESS_TIME = 60000;
-const TYPING_GRACE_PERIOD = 1500;
-const systemInstructions = 'זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.';
+// הגדרות זמן
+const MAX_PROCESS_TIME = 60000; // דקה מקסימום לעיבוד
+const TYPING_GRACE_PERIOD = 1500; // 1.5 שניות אחרי הקלדה אחרונה
 
+// הוראות המערכת
+const systemInstructions = `
+אתה יואב – מוכר עילית בן 30, חד, דינמי, אנושי ואסרטיבי, שתפקידו לנהל שיחות מכירה מקצועיות אך טבעיות, זורמות וכריזמטיות, שמקדמות את השיח בכל מצב לסגירה, תשלום, פגישה, התחייבות או זימון להמשך.
+
+# שלבי שיחה
+
+- תמיד פתח כך:
+  שלום, כאן יואב – מוכר שמפצח התנגדויות. חן אלטר מאיר בנה אותי לפי שיטת קוד המפצח שמייצרת תוצאות מהירות.
+  איך קוראים לך?
+
+- לאחר קבלת שם:
+  [שם], יש משהו שאתה צריך לפצח או שאתה רוצה שנעשה סימולציה שתרים אותך למעלה?
+
+- נהל את השיחה בעברית דיבורית, בגובה העיניים, בלי מילים מקצועיות או פורמט פורמלי.
+
+# עקרונות לשיחה
+
+- שוחח בשפה מהירה, אותנטית, נוגעת, לא טכנית, וללא תיווך מיותר.
+- חזור על מילות מפתח של הלקוח, הראה הקשבה והובלת דינמיקה.
+- העמד תמיד לחץ חיובי: זמן, רגש, הזדמנות – אך לא ברוטאליות.
+- דבר טבעי, חי ותמיד עם רצף לכיוון סגירה.
+`;
+
+// פונקציה לעיבוד הודעות עם המתנה להקלדה
 async function processMessages(threadId) {
-  if (processingThreads.has(threadId)) return;
+  if (processingThreads.has(threadId)) {
+    console.log(`⏳ Already processing thread ${threadId}`);
+    return;
+  }
+  
   processingThreads.add(threadId);
+  console.log(`🔄 Starting to process messages for thread ${threadId}`);
 
+  // הגדרת timeout למניעת תקיעות
   const timeout = setTimeout(() => {
     console.error(`⏰ Process timeout for thread ${threadId}`);
     processingThreads.delete(threadId);
     const clients = waitingClients.get(threadId) || [];
-    clients.splice(0).forEach(client => client?.reject?.(new Error('Process timeout')));
+    clients.splice(0).forEach(client => {
+      if (client?.reject) client.reject(new Error('Process timeout'));
+    });
     processTimeouts.delete(threadId);
   }, MAX_PROCESS_TIME);
+  
   processTimeouts.set(threadId, timeout);
 
+  // המתנה להקלדה להסתיים
   while (true) {
     const lastTyping = lastTypingTimeMap.get(threadId) || 0;
     const now = Date.now();
-    if (now - lastTyping > TYPING_GRACE_PERIOD) break;
+    if (now - lastTyping > TYPING_GRACE_PERIOD) {
+      console.log(`✅ Typing finished for thread ${threadId}`);
+      break;
+    }
+    console.log(`⌨️ Still typing... waiting for thread ${threadId}`);
     await new Promise(r => setTimeout(r, 500));
   }
 
   const queue = messageQueues.get(threadId) || [];
   const clients = waitingClients.get(threadId) || [];
+  
   if (!queue.length || !clients.length) {
+    console.log(`⚠️ No messages or clients for thread ${threadId}`);
     processingThreads.delete(threadId);
     clearTimeout(processTimeouts.get(threadId));
     processTimeouts.delete(threadId);
     return;
   }
 
+  // איחוד כל ההודעות
   const allMessages = queue.splice(0);
   const combined = allMessages.map(m => m.content).join('\n\n');
-  const isFirstMessage = allMessages.length > 0 && !lastTypingTimeMap.has(threadId);
-  const fullContent = isFirstMessage ? `${systemInstructions}\n\n${combined}` : combined;
+  const isFirstMessage = !lastTypingTimeMap.has(threadId + '_processed');
+  const fullContent = isFirstMessage ? 
+    `${systemInstructions}\n\n${combined}` : 
+    `זכור: אתה יואב - מפצח התנגדויות. ענה טבעי וחי.\n\n${combined}`;
+
+  console.log(`📝 Processing ${allMessages.length} combined messages for thread ${threadId}`);
 
   try {
     const OPENAI_KEY = process.env.OPENAI_KEY;
     const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-    await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+    // שליחת ההודעה המאוחדת
+    const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
         'Content-Type': 'application/json',
         'OpenAI-Beta': 'assistants=v2'
       },
-      body: JSON.stringify({ role: 'user', content: fullContent })
+      body: JSON.stringify({ 
+        role: 'user', 
+        content: fullContent 
+      })
     });
 
+    if (!messageRes.ok) {
+      throw new Error(`Failed to send message: ${messageRes.status}`);
+    }
+
+    // הרצת האסיסטנט
     const runRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
       method: 'POST',
       headers: {
@@ -82,46 +137,84 @@ async function processMessages(threadId) {
         'Content-Type': 'application/json',
         'OpenAI-Beta': 'assistants=v2'
       },
-      body: JSON.stringify({ assistant_id: ASSISTANT_ID })
+      body: JSON.stringify({ 
+        assistant_id: ASSISTANT_ID 
+      })
     });
+
+    if (!runRes.ok) {
+      throw new Error(`Failed to start run: ${runRes.status}`);
+    }
 
     const runData = await runRes.json();
     const runId = runData.id;
     let status = 'in_progress';
     let attempts = 0;
 
+    // המתנה לסיום
     while ((status === 'in_progress' || status === 'queued') && attempts < 60) {
       await new Promise(r => setTimeout(r, 1000));
       attempts++;
-      const res = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+      
+      const statusRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
         headers: {
           'Authorization': `Bearer ${OPENAI_KEY}`,
           'OpenAI-Beta': 'assistants=v2'
         }
       });
-      const statusData = await res.json();
+      
+      if (!statusRes.ok) break;
+      
+      const statusData = await statusRes.json();
       status = statusData.status;
-      if (status === 'failed') throw new Error(statusData.last_error?.message || 'Run failed');
+      
+      if (status === 'failed') {
+        throw new Error(statusData.last_error?.message || 'Run failed');
+      }
     }
 
-    if (status !== 'completed') throw new Error('Run did not complete in time');
+    if (status !== 'completed') {
+      throw new Error('Run did not complete in time');
+    }
 
+    // קבלת התגובה
     const messagesRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       headers: {
         'Authorization': `Bearer ${OPENAI_KEY}`,
         'OpenAI-Beta': 'assistants=v2'
       }
     });
+
+    if (!messagesRes.ok) {
+      throw new Error(`Failed to fetch messages: ${messagesRes.status}`);
+    }
+
     const messagesData = await messagesRes.json();
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
+    console.log(`✅ Got reply for thread ${threadId}, sending to ${clients.length} clients`);
+
+    // שליחת התגובה לכל הלקוחות
     const allClients = clients.splice(0);
-    allClients.forEach(c => c?.resolve?.({ reply, threadId }));
+    allClients.forEach(client => {
+      if (client?.resolve) {
+        client.resolve({ reply, threadId });
+      }
+    });
+
+    // סימון שהושלם עיבוד
+    lastTypingTimeMap.set(threadId + '_processed', Date.now());
 
   } catch (err) {
+    console.error(`❌ Error processing messages for thread ${threadId}:`, err.message);
+    
     const allClients = clients.splice(0);
-    allClients.forEach(c => c?.reject?.(err));
+    allClients.forEach(client => {
+      if (client?.reject) {
+        client.reject(err);
+      }
+    });
   } finally {
     lastTypingTimeMap.delete(threadId);
     processingThreads.delete(threadId);
@@ -130,35 +223,68 @@ async function processMessages(threadId) {
   }
 }
 
+// פונקציה לתזמון עיבוד הודעות
 function scheduleProcessing(threadId, message) {
+  // הכנת התורים
   if (!messageQueues.has(threadId)) messageQueues.set(threadId, []);
   if (!waitingClients.has(threadId)) waitingClients.set(threadId, []);
+  
+  // הוספת ההודעה לתור
   messageQueues.get(threadId).push({ content: message });
+  
+  // יצירת Promise לתגובה
   const promise = new Promise((resolve, reject) => {
     waitingClients.get(threadId).push({ resolve, reject });
   });
-  if (!processingThreads.has(threadId)) processMessages(threadId);
+  
+  // התחלת עיבוד אם לא רץ כבר
+  if (!processingThreads.has(threadId)) {
+    processMessages(threadId);
+  }
+  
   return promise;
 }
 
+// endpoint להתראות הקלדה
 app.post('/api/typing', (req, res) => {
   const { threadId } = req.body;
-  if (!threadId) return res.status(400).json({ error: 'Missing threadId' });
+  
+  if (!threadId) {
+    return res.status(400).json({ error: 'Missing threadId' });
+  }
+  
+  // עדכון זמן הקלדה אחרון
   lastTypingTimeMap.set(threadId, Date.now());
+  console.log(`⌨️ User typing in thread ${threadId}`);
+  
   res.json({ status: 'typing acknowledged' });
 });
 
+// endpoint ראשי לצ'אט
 app.post('/api/chat', async (req, res) => {
   const { message, threadId: clientThreadId } = req.body;
   const OPENAI_KEY = process.env.OPENAI_KEY;
   const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-  if (!OPENAI_KEY || !ASSISTANT_ID) return res.status(500).json({ error: 'Missing API keys' });
-  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message is required' });
+  console.log('=== CHAT REQUEST ===');
+  console.log('Message:', message);
+  console.log('Thread ID:', clientThreadId);
+
+  if (!OPENAI_KEY || !ASSISTANT_ID) {
+    return res.status(500).json({ error: 'Missing API keys' });
+  }
+  
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'Message is required' });
+  }
 
   try {
     let threadId = clientThreadId;
+    
+    // יצירת thread חדש אם צריך
     if (!threadId) {
+      console.log('🔄 Creating new thread...');
+      
       const threadRes = await fetch('https://api.openai.com/v1/threads', {
         method: 'POST',
         headers: {
@@ -167,28 +293,46 @@ app.post('/api/chat', async (req, res) => {
           'OpenAI-Beta': 'assistants=v2'
         }
       });
+
+      if (!threadRes.ok) {
+        throw new Error('Failed to create thread');
+      }
+
       const threadData = await threadRes.json();
       threadId = threadData.id;
-
-      await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        },
-        body: JSON.stringify({ role: 'user', content: systemInstructions })
-      });
+      console.log('✅ Thread created:', threadId);
     }
 
+    // עיבוד ההודעה דרך המערכת החכמה
     const result = await scheduleProcessing(threadId, message);
     res.json(result);
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('❌ Server error:', err);
+    res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 
+// ניקוי תקופתי של נתונים ישנים
+setInterval(() => {
+  const now = Date.now();
+  const oldThreshold = 30 * 60 * 1000; // 30 דקות
+  
+  // ניקוי זמני הקלדה ישנים
+  for (const [key, time] of lastTypingTimeMap.entries()) {
+    if (now - time > oldThreshold) {
+      lastTypingTimeMap.delete(key);
+    }
+  }
+  
+  console.log('🧹 Cleaned up old typing data');
+}, 10 * 60 * 1000); // כל 10 דקות
+
 app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
+  console.log(`🚀 Advanced server running on port ${port}`);
+  console.log('Features: Smart typing detection, Message unification, Auto cleanup');
+  console.log('Environment check:', {
+    hasOpenAIKey: !!process.env.OPENAI_KEY,
+    hasAssistantID: !!process.env.ASSISTANT_ID
+  });
 });
