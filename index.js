@@ -19,6 +19,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // הגשת קובץ ה-HTML הראשי  
 app.get('/', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -272,11 +273,41 @@ async function processMessageQueue(threadId) {
     const replyText = lastBotMessage?.content[0]?.text?.value || 'הבוט לא החזיר תגובה.';
 
     // החזרת אותה תגובה לכל הלקוחות שחיכו
-    clients.forEach(client => {
-      if (client.resolve) {
-        client.resolve({ reply: replyText, threadId });
+    console.log(`About to process clients for thread: ${threadId}`);
+    
+    const clientsList = waitingClients.get(threadId);
+    console.log(`Clients list:`, clientsList);
+    console.log(`Is array:`, Array.isArray(clientsList));
+    console.log(`Type:`, typeof clientsList);
+    
+    if (clientsList && Array.isArray(clientsList)) {
+      console.log(`Number of clients: ${clientsList.length}`);
+      
+      // פשוט מאוד - בלי forEach
+      for (let i = 0; i < clientsList.length; i++) {
+        try {
+          const client = clientsList[i];
+          console.log(`Processing client ${i}`, typeof client);
+          
+          if (client && client.resolve && typeof client.resolve === 'function') {
+            console.log(`Resolving client ${i}`);
+            try {
+              await client.resolve({ reply: replyText, threadId });
+              console.log(`Successfully resolved client ${i}`);
+            } catch (resolveError) {
+              console.error(`Error during resolve call for client ${i}:`, resolveError.message);
+              // זה בסדר - אולי ה-Promise כבר resolved או rejected
+            }
+          } else {
+            console.log(`Client ${i} invalid or no resolve function:`, client);
+          }
+        } catch (err) {
+          console.error(`Error with client ${i}:`, err);
+        }
       }
-    });
+    } else {
+      console.log(`No valid clients list`);
+    }
 
     // ניקוי רשימת הלקוחות הממתינים
     waitingClients.delete(threadId);
