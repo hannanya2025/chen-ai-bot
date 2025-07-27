@@ -17,6 +17,12 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// הגשת קובץ ה-HTML הראשי  
+app.get('/', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // תור הודעות וטיימרים לכל thread
 const messageQueues = new Map();
 const processingThreads = new Set();
