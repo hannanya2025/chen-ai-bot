@@ -546,24 +546,20 @@
         });
 
         // זיהוי הקלדה - רק עבור המשתמש
-        this.messageInput.addEventListener('input', () => this.handleUserTyping());
+        this.messageInput.addEventListener('input', () => {
+          this.handleUserTyping();
+          this.updateUI(); // עדכון צבע הכפתור
+        });
         this.messageInput.addEventListener('focus', () => this.handleUserTyping());
         this.messageInput.addEventListener('blur', () => this.handleUserStopTyping());
 
-        // אפקט ויזואלי לכפתור שליחה
-        this.messageInput.addEventListener('input', () => {
-          if (this.messageInput.value.trim()) {
-            this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
-          } else {
-            this.sendButton.style.background = '#ccc';
-          }
-        });
+        // עדכון צבע כפתור בהתאם לתוכן - הוסר הקוד הכפול
       }
 
       // פונקציות להקלדת המשתמש בלבד
       handleUserTyping() {
         // אם המשתמש לא היה מקליד, מתחיל מצב הקלדה
-        if (!this.isUserTyping && !this.isWaitingForResponse) {
+        if (!this.isUserTyping) {
           this.isUserTyping = true;
           this.updateUserTypingStatus(true);
         }
@@ -718,7 +714,7 @@
 
       async sendMessage() {
         const text = this.messageInput.value.trim();
-        if (!text || this.isWaitingForResponse) return;
+        if (!text) return; // הסרתי את התנאי isWaitingForResponse
 
         // עוצר מצב הקלדת המשתמש
         this.handleUserStopTyping();
@@ -727,9 +723,8 @@
         this.addMessage('user', text);
         this.messageInput.value = '';
         
-        // מעדכן מצב - רק מונע שליחת הודעות נוספות אבל לא הקלדה
-        this.isWaitingForResponse = true;
-        this.updateUI();
+        // מעדכן רק את הכפתור אבל לא מונע שליחה
+        this.updateSendButton(true);
         this.showBotTypingIndicator();
 
         try {
@@ -765,28 +760,33 @@
           this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
           console.error('Error:', error);
         } finally {
-          this.isWaitingForResponse = false;
-          this.updateUI();
+          this.updateSendButton(false);
         }
       }
 
-      updateUI() {
-        // מונע רק שליחת הודעות חדשות, לא הקלדה
-        this.sendButton.disabled = this.isWaitingForResponse;
-        
-        if (this.isWaitingForResponse) {
+      updateSendButton(isProcessing) {
+        if (isProcessing) {
           this.sendButton.textContent = '⏳';
           this.onlineStatus.textContent = '● מעבד...';
         } else {
           this.sendButton.textContent = '➤';
           this.onlineStatus.textContent = '● מחובר';
-          this.messageInput.focus(); // מחזיר פוקוס
+          this.messageInput.focus();
         }
         
         // עדכון צבע כפתור בהתאם לתוכן
-        if (this.messageInput.value.trim() && !this.isWaitingForResponse) {
+        if (this.messageInput.value.trim()) {
           this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
-        } else if (!this.isWaitingForResponse) {
+        } else {
+          this.sendButton.style.background = '#ccc';
+        }
+      }
+
+      updateUI() {
+        // רק עדכון ויזואלי של הכפתור, לא חסימה
+        if (this.messageInput.value.trim()) {
+          this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
+        } else {
           this.sendButton.style.background = '#ccc';
         }
       }
