@@ -6,7 +6,7 @@ const messagesContainer = document.getElementById('messages');
 
 let threadId = null;
 let typingTimeout = null;
-let isWaiting = false; // משתנה חדש כדי למנוע שליחה כפולה
+let isWaiting = false; // 🔒 נעילת שליחה – מונעת כפילות
 
 // עדכון שרת על כך שהמשתמש מקליד
 function notifyTyping() {
@@ -22,19 +22,19 @@ function notifyTyping() {
 input.addEventListener('input', () => {
   clearTimeout(typingTimeout);
   notifyTyping();
-  typingTimeout = setTimeout(() => {}, 1000);
+  typingTimeout = setTimeout(() => {}, 1000); // מחכה לפני שליחה נוספת
 });
 
 // שליחת ההודעה
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const message = input.value.trim();
-  if (!message || isWaiting) return; // מניעת שליחה כפולה
+  if (!message || isWaiting) return; // 💥 בולם שליחה כפולה
 
+  isWaiting = true; // 🔐 נועל שליחה
   appendMessage('user', message);
   input.value = '';
   input.disabled = true;
-  isWaiting = true; // נועל שליחה
 
   try {
     const res = await fetch('/api/chat', {
@@ -57,7 +57,7 @@ form.addEventListener('submit', async (e) => {
 
   input.disabled = false;
   input.focus();
-  isWaiting = false; // משחרר את המנעול
+  isWaiting = false; // 🔓 משחרר נעילה
 });
 
 // פונקציה להצגת הודעות
