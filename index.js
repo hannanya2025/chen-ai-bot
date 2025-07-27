@@ -115,10 +115,7 @@ async function processMessages(threadId) {
       }
     });
     const messagesData = await messagesRes.json();
-    const lastBotMessage = messagesData.data
-  .filter(m => m.role === 'assistant')
-  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-
+    const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
     const allClients = clients.splice(0);
