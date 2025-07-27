@@ -231,9 +231,15 @@ async function processMessageQueue(threadId) {
             
             if (client && client.reject && typeof client.reject === 'function') {
               console.log(`About to reject client ${i}`);
-              const error = new Error('Assistant processing failed');
-              client.reject(error);
-              console.log(`Successfully rejected client ${i}`);
+              try {
+                const error = new Error('Assistant processing failed');
+                console.log(`Created error, calling reject...`);
+                await client.reject(error);
+                console.log(`Successfully rejected client ${i}`);
+              } catch (rejectError) {
+                console.error(`Error during reject call for client ${i}:`, rejectError.message);
+                // זה בסדר - אולי ה-Promise כבר resolved או rejected
+              }
             } else {
               console.log(`Skipping client ${i} - no valid reject function`);
             }
@@ -280,7 +286,11 @@ async function processMessageQueue(threadId) {
           const client = clientsList[i];
           console.log(`Catch rejecting client ${i}:`, typeof client, client ? 'exists' : 'null');
           if (client && client.reject && typeof client.reject === 'function') {
-            client.reject(error);
+            try {
+              await client.reject(error);
+            } catch (rejectError) {
+              console.error(`Error during catch reject call for client ${i}:`, rejectError.message);
+            }
           } else {
             console.log(`Client ${i} has no valid reject function in catch:`, client);
           }
