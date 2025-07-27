@@ -15,7 +15,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// תור הודעות פשוט לכל thread
+// תור הודעות ונתונים לכל thread
 const messageQueues = new Map();
 const processingThreads = new Set();
 const waitingClients = new Map();
@@ -66,7 +66,7 @@ async function processMessages(threadId) {
         }
         
         // איחוד כל ההודעות בתור
-        const allMessages = queue.splice(0);
+        const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
         const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
         console.log(`📝 Combined ${allMessages.length} messages`);
         
@@ -192,28 +192,35 @@ async function processMessages(threadId) {
     }
 }
 
-// פונקציה לתזמון עיבוד
+// פונקציה לתזמון עיבוד משופרת
 function scheduleProcessing(threadId) {
     if (processTimers.has(threadId)) {
         clearTimeout(processTimers.get(threadId));
     }
 
     const timer = setTimeout(async () => {
+        // בדוק אם יש הודעות בתור או שהמשתמש עדיין מקליד
+        const queue = messageQueues.get(threadId) || [];
         if (typingStatus.has(threadId)) {
             const lastTyping = typingStatus.get(threadId);
             const timeSinceTyping = Date.now() - lastTyping;
-            if (timeSinceTyping < 2000) {
-                scheduleProcessing(threadId);
+            if (timeSinceTyping < DELAY_TIME) {
+                scheduleProcessing(threadId); // דחה שוב אם עדיין מקלידים
                 return;
             }
+        }
+        if (queue.length === 0) {
+            processTimers.delete(threadId);
+            return;
         }
         processTimers.delete(threadId);
         await processMessages(threadId);
     }, DELAY_TIME);
-    
+
     processTimers.set(threadId, timer);
 }
 
+// Endpoints עבור התראות הקלדה
 app.post('/api/typing', (req, res) => {
     const { threadId } = req.body;
     if (!threadId) {
@@ -234,6 +241,7 @@ app.post('/api/typing-stop', (req, res) => {
     res.json({ status: 'typing stopped' });
 });
 
+// Endpoint לטיפול בשיחה
 app.post('/api/chat', async (req, res) => {
     const { message: originalUserMessage, threadId: clientThreadId } = req.body;
     const OPENAI_KEY = process.env.OPENAI_KEY;
