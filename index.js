@@ -214,20 +214,35 @@ async function processMessageQueue(threadId) {
       console.error('Assistant run failed or timed out');
       
       const clientsList = waitingClients.get(threadId);
+      console.log('Clients list on failure:', clientsList);
+      
       if (clientsList && Array.isArray(clientsList)) {
+        console.log(`Found ${clientsList.length} clients to reject`);
+        
         for (let i = 0; i < clientsList.length; i++) {
           try {
             const client = clientsList[i];
-            console.log(`Rejecting client ${i}:`, typeof client, client ? 'exists' : 'null');
+            console.log(`Client ${i} details:`, {
+              exists: !!client,
+              type: typeof client,
+              hasReject: client && 'reject' in client,
+              rejectType: client && typeof client.reject
+            });
+            
             if (client && client.reject && typeof client.reject === 'function') {
-              client.reject(new Error('Assistant processing failed'));
+              console.log(`About to reject client ${i}`);
+              const error = new Error('Assistant processing failed');
+              client.reject(error);
+              console.log(`Successfully rejected client ${i}`);
             } else {
-              console.log(`Client ${i} has no valid reject function:`, client);
+              console.log(`Skipping client ${i} - no valid reject function`);
             }
           } catch (err) {
-            console.error(`Error rejecting client ${i}:`, err);
+            console.error(`Exception when rejecting client ${i}:`, err.message, err.stack);
           }
         }
+      } else {
+        console.log('No clients list or not an array');
       }
       
       waitingClients.delete(threadId);
