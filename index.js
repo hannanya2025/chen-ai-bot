@@ -16,13 +16,13 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // תור הודעות ונתונים לכל thread
-const messageQueues = new Map();
+const messageQueues = new Map(); // תור פעיל
+const retryQueues = new Map(); // תור חוזר להודעות שלא נענו
 const processingThreads = new Set();
 const waitingClients = new Map();
-const processTimers = new Map();
 const processTimeouts = new Map(); // טיימר הגנה לעיבוד
-const DELAY_TIME = 1500; // 1.5 שניות לאיסוף הודעות
-const MAX_PROCESS_TIME = 10000; // 10 שניות מקסימום לעיבוד
+const MAX_PROCESS_TIME = 15000; // 15 שניות מקסימום לעיבוד
+const MAX_RETRIES = 3; // מספר ניסיונות חוזרים מקסימלי
 
 // הוראות קוד המפצח
 const systemInstructions = `
@@ -136,11 +136,11 @@ async function processMessages(threadId) {
     if (processingThreads.has(threadId)) return;
     
     processingThreads.add(threadId);
-    console.log(`🔄 Processing messages for thread: ${threadId}`);
+    console.log(`🔄 Starting processing for thread: ${threadId}`);
     
     // טיימר הגנה לעיבוד
     const timeout = setTimeout(() => {
-        console.error(`⏰ Process timeout for thread ${threadId}, resetting`);
+        console.error(`⏰ Process timeout for thread ${threadId}, moving to retry queue`);
         processingThreads.delete(threadId);
         const clients = waitingClients.get(threadId) || [];
         const allClients = clients.splice(0);
@@ -149,7 +149,22 @@ async function processMessages(threadId) {
                 client.reject(new Error('Process timeout'));
             }
         });
-        messageQueues.delete(threadId);
+        const queue = messageQueues.get(threadId) || [];
+        if (queue.length > 0) {
+            if (!retryQueues.has(threadId)) {
+                retryQueues.set(threadId, { messages: [], retryCount: 0 });
+            }
+            const retryData = retryQueues.get(threadId);
+            retryData.messages.push(...queue.splice(0));
+            retryData.retryCount += 1;
+            console.log(`📤 Moved ${retryData.messages.length} messages to retry queue for thread ${threadId}, retry count: ${retryData.retryCount}`);
+            if (retryData.retryCount < MAX_RETRIES) {
+                setTimeout(() => processRetryMessages(threadId), 2000); // ניסיון חוזר אחרי 2 שניות
+            } else {
+                console.error(`❌ Max retries reached for thread ${threadId}, discarding messages`);
+                retryQueues.delete(threadId);
+            }
+        }
         processTimeouts.delete(threadId);
     }, MAX_PROCESS_TIME);
 
@@ -169,10 +184,10 @@ async function processMessages(threadId) {
             return;
         }
 
-        // איחוד כל ההודעות בתור לאחר שהטיימר הסתיים
+        // איחוד כל ההודעות בתור
         const allMessages = queue.splice(0); // לוקח את כל ההודעות ומנקה את התור
         const combinedMessage = allMessages.map(msg => msg.content).join('\n\n');
-        console.log(`📝 Combined ${allMessages.length} messages: ${combinedMessage}`);
+        console.log(`📝 Combined ${allMessages.length} messages for thread ${threadId}: ${combinedMessage}`);
 
         // שליחת ההודעה המאוחדת
         const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
@@ -257,7 +272,7 @@ async function processMessages(threadId) {
         const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
         const replyText = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-        console.log(`✅ Sending response to ${clients.length} clients: ${replyText}`);
+        console.log(`✅ Sending response to ${clients.length} clients for thread ${threadId}: ${replyText}`);
         
         // שליחת התגובה לכל הלקוחות
         const allClients = clients.splice(0);
@@ -272,7 +287,7 @@ async function processMessages(threadId) {
         });
 
     } catch (error) {
-        console.error('❌ Processing error:', error.message);
+        console.error('❌ Processing error for thread ${threadId}:', error.message);
         
         // שליחת שגיאה לכל הלקוחות
         const clients = waitingClients.get(threadId) || [];
@@ -291,26 +306,48 @@ async function processMessages(threadId) {
         processingThreads.delete(threadId);
         clearTimeout(processTimeouts.get(threadId));
         processTimeouts.delete(threadId);
+        // בדוק אם יש הודעות חוזרות בתור
+        const retryData = retryQueues.get(threadId);
+        if (retryData && retryData.messages.length > 0) {
+            messageQueues.set(threadId, retryData.messages.splice(0));
+            retryQueues.delete(threadId);
+            console.log(`🔄 Retrying ${messageQueues.get(threadId).length} messages for thread ${threadId}`);
+            processMessages(threadId);
+        } else {
+            const queue = messageQueues.get(threadId) || [];
+            if (queue.length > 0) {
+                console.log(`🔄 Restarting processing for thread ${threadId} with ${queue.length} remaining messages`);
+                processMessages(threadId);
+            }
+        }
     }
 }
 
-// פונקציה לתזמון עיבוד עם דחייה קצרה
+// פונקציה לעיבוד הודעות חוזרות (מיותר כעת, אבל נשאר לתאימות)
+async function processRetryMessages(threadId) {
+    const retryData = retryQueues.get(threadId);
+    if (!retryData || retryData.retryCount >= MAX_RETRIES) return;
+
+    messageQueues.set(threadId, retryData.messages.splice(0));
+    retryQueues.delete(threadId);
+    console.log(`🔄 Retrying ${messageQueues.get(threadId).length} messages for thread ${threadId}`);
+    processMessages(threadId);
+}
+
+// פונקציה להוספת הודעה לתור ולניהול עיבוד
 function scheduleProcessing(threadId) {
-    if (processingThreads.has(threadId)) {
-        console.log(`⏳ Delaying processing for thread ${threadId} due to active process`);
-        return; // דוחה אם כבר בעיבוד
+    if (!messageQueues.has(threadId)) {
+        messageQueues.set(threadId, []);
+    }
+    if (!waitingClients.has(threadId)) {
+        waitingClients.set(threadId, []);
     }
 
-    if (!processTimers.has(threadId)) {
-        const timer = setTimeout(async () => {
-            const queue = messageQueues.get(threadId) || [];
-            if (queue.length > 0) {
-                await processMessages(threadId);
-            }
-            processTimers.delete(threadId);
-        }, DELAY_TIME);
-        processTimers.set(threadId, timer);
+    const queue = messageQueues.get(threadId);
+    if (queue.length === 0 || !processingThreads.has(threadId)) {
+        processMessages(threadId);
     }
+    // אם כבר בעיבוד, ההודעה תמתין בתור ותעובד בסיום
 }
 
 // Endpoints עבור התראות הקלדה (מיותר כאן אבל נשאיר לתאימות)
@@ -406,13 +443,13 @@ app.post('/api/chat', async (req, res) => {
         res.json(result);
 
     } catch (err) {
-        console.error('❌ Server error:', err);
+        console.error('❌ Server error for thread ${threadId}:', err);
         res.status(500).json({ error: err.message || 'Server error' });
     }
 });
 
 app.listen(port, () => {
-    console.log(`🚀 Running on port ${port} with message unification`);
+    console.log(`🚀 Running on port ${port} with retry mechanism`);
     console.log('Environment check:', {
         hasOpenAIKey: !!process.env.OPENAI_KEY,
         hasAssistantID: !!process.env.ASSISTANT_ID
