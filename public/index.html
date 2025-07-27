@@ -436,25 +436,47 @@
                 }, 800);
             }
 
-            async sendMessage() {
-                const text = this.messageInput.value.trim();
-                if (!text) return;
+           async sendMessage() {
+    const text = this.messageInput.value.trim();
+    if (!text || this.isWaitingForResponse) return;
+    this.isWaitingForResponse = true;
 
-                this.addMessage('user', text);
-                this.messageInput.value = '';
-                
-                this.updateSendButton(true);
-                this.showTypingIndicator();
+    this.addMessage('user', text);
+    this.messageInput.value = '';
+    
+    this.updateSendButton(true);
+    this.showTypingIndicator();
 
-                try {
-                    const response = await fetch('/api/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            message: text,
-                            threadId: this.threadId
-                        })
-                    });
+    try {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                message: text,
+                threadId: this.threadId
+            })
+        });
+
+        const data = await response.json();
+        
+        this.hideTypingIndicator();
+        
+        if (response.ok) {
+            this.threadId = data.threadId;
+            this.addMessage('bot', data.reply || 'לא התקבלה תשובה 😕');
+        } else {
+            this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
+        }
+        
+    } catch (error) {
+        this.hideTypingIndicator();
+        this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
+        console.error('Error:', error);
+    } finally {
+        this.isWaitingForResponse = false;
+        this.updateSendButton(false);
+    }
+}
 
                     const data = await response.json();
                     
