@@ -543,26 +543,28 @@
                 this.currentTranscript = '';
                 this.updateButtonMode();
                 
-                // אם המערכת לא עסוקה, מתחיל טיימר חדש
-                // אם היא עסוקה, ההודעה פשוט מתווספת לתור
-                if (!this.isProcessing) {
-                    this.resetQueueTimer();
-                } else {
-                    console.log('המערכת עסוקה - ההודעה תצורף לתור הבא');
-                }
+                // תמיד מתחיל טיימר חדש (מאפס את הקודם)
+                this.resetQueueTimer();
             }
 
             resetQueueTimer() {
-                // מבטל טיימר קיים (זה חשוב!)
+                // מבטל טיימר קיים
                 if (this.queueTimer) {
                     clearTimeout(this.queueTimer);
-                    console.log('מאפס טיימר - ההודעה החדשה תתאחד עם הקודמות');
                 }
                 
-                // מתחיל טיימר חדש
+                console.log(`טיימר חדש עבור ${this.messageQueue.length} הודעות בתור`);
+                
+                // מתחיל טיימר חדש - תמיד!
                 this.queueTimer = setTimeout(() => {
-                    this.processQueue();
-                }, 800); // זמן ארוך יותר לאיסוף הודעות
+                    if (!this.isProcessing) {
+                        this.processQueue();
+                    } else {
+                        // אם עדיין בעיבוד, מחכה עוד קצת
+                        console.log('עדיין בעיבוד, מאריך טיימר');
+                        this.resetQueueTimer();
+                    }
+                }, 1000); // זמן ארוך יותר
             }
 
             async processQueue() {
@@ -571,6 +573,10 @@
                 }
 
                 this.isProcessing = true;
+                
+                // המתנה קצרה נוספת לוודא שלא מגיעות הודעות ברגע האחרון
+                await new Promise(resolve => setTimeout(resolve, 200));
+                
                 console.log('מתחיל עיבוד תור עם', this.messageQueue.length, 'הודעות:', [...this.messageQueue]);
 
                 // מסמן את כל ההודעות הממתינות כ"נשלחו"
@@ -604,7 +610,7 @@
                     this.threadId = data.threadId;
                     const botReply = data.reply || 'לא התקבלה תשובה 😕';
                     
-                    console.log(`תגובה מהבוט (על ${messageCount} הודעות מאוחדות):`, botReply);
+                    console.log(`✅ תגובה מהבוט (על ${messageCount} הודעות מאוחדות):`, botReply);
                     this.addMessage('bot', botReply);
 
                 } catch (error) {
@@ -614,9 +620,9 @@
                 } finally {
                     this.isProcessing = false;
                     
-                    // אם הצטברו הודעות חדשות בזמן העיבוד, מעבד אותן
+                    // אם הצטברו הודעות חדשות, מתחיל טיימר חדש
                     if (this.messageQueue.length > 0) {
-                        console.log('הודעות חדשות הצטברו בזמן העיבוד:', [...this.messageQueue]);
+                        console.log('🔄 הודעות חדשות הצטברו:', [...this.messageQueue]);
                         this.resetQueueTimer();
                     }
                     
