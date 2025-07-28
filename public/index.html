@@ -582,9 +582,13 @@
 
             scheduleProcessing() {
                 if (this.processTimeout) clearTimeout(this.processTimeout);
-                this.processTimeout = setTimeout(() => {
-                    if (this.pendingMessages.length > 0) this.processPendingMessages();
-                }, 1500);
+                if (this.pendingMessages.length > 0 && !this.isProcessing) {
+                    this.processPendingMessages();
+                } else {
+                    this.processTimeout = setTimeout(() => {
+                        if (this.pendingMessages.length > 0) this.processPendingMessages();
+                    }, 500); // זמן קצר יותר לבדיקה
+                }
             }
 
             async processPendingMessages() {
@@ -676,8 +680,10 @@
 
                 console.log('שולח הודעה:', text);
                 
-                // מבטל בקשה קודמת אם קיימת, אבל שומר את ההודעות הקודמות בתור
-                if (this.isProcessing) this.cancelCurrentRequest();
+                // מבטל עיבוד קודם אם קיים ומאחד את ההודעות
+                if (this.isProcessing) {
+                    this.cancelCurrentRequest();
+                }
                 
                 this.addMessage('user', text, true);
                 this.pendingMessages.push(text);
@@ -687,8 +693,7 @@
                 this.currentTranscript = '';
                 this.updateButtonMode();
 
-                // מפעיל עיבוד רק אם לא בעיצומו
-                if (!this.isProcessing) this.scheduleProcessing();
+                this.scheduleProcessing();
             }
         }
 
