@@ -679,7 +679,7 @@
                 this.addMessage('user', text, true);
                 this.pendingMessages.push(text);
                 
-                // מנקה את השדה מיד אחרי השליחה
+                // מנקה את השדה מיד אחרי השליחה, גם עבור הקלטה קולית
                 this.messageInput.value = '';
                 this.currentTranscript = '';
                 this.updateButtonMode();
