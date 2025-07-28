@@ -130,37 +130,6 @@
             border-top: 1px solid #ddd;
         }
 
-        .voice-controls {
-            display: flex;
-            gap: 5px;
-            align-items: center;
-        }
-
-        .voice-button {
-            width: 45px;
-            height: 45px;
-            border: none;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
-            color: white;
-            font-size: 1.2rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
-            box-shadow: 0 3px 10px rgba(255, 107, 107, 0.3);
-        }
-
-        .voice-button.recording {
-            background: linear-gradient(135deg, #ff4757, #ff3838);
-            animation: pulse 1.5s infinite;
-        }
-
-        .voice-button:hover {
-            transform: scale(1.1);
-        }
-
         .mute-button {
             width: 35px;
             height: 35px;
@@ -196,12 +165,11 @@
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
 
-        .send-button {
+        .action-button {
             width: 45px;
             height: 45px;
             border: none;
             border-radius: 50%;
-            background: linear-gradient(135deg, #4CAF50, #45a049);
             color: white;
             font-size: 1.2rem;
             cursor: pointer;
@@ -209,14 +177,29 @@
             align-items: center;
             justify-content: center;
             transition: all 0.3s ease;
+        }
+
+        .action-button.send-mode {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
             box-shadow: 0 3px 10px rgba(76, 175, 80, 0.3);
         }
 
-        .send-button:hover {
+        .action-button.voice-mode {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            box-shadow: 0 3px 10px rgba(255, 107, 107, 0.3);
+        }
+
+        .action-button.recording {
+            background: linear-gradient(135deg, #ff4757, #ff3838);
+            animation: pulse 1.5s infinite;
             transform: scale(1.1);
         }
 
-        .send-button:disabled {
+        .action-button:hover:not(.recording) {
+            transform: scale(1.1);
+        }
+
+        .action-button:disabled {
             background: #ccc;
             cursor: not-allowed;
             transform: none;
@@ -301,12 +284,9 @@
         <div class="chat-messages" id="chatMessages"></div>
 
         <div class="input-container">
-            <div class="voice-controls">
-                <button id="voiceButton" class="voice-button" title="לחץ להתחלת הקלטה">🎤</button>
-                <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
-            </div>
-            <input type="text" id="messageInput" class="message-input" placeholder="כתוב את ההודעה שלך או לחץ על המיקרופון..." autocomplete="off"/>
-            <button id="sendButton" class="send-button">➤</button>
+            <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
+            <input type="text" id="messageInput" class="message-input" placeholder="כתוב הודעה או החזק להקלטה..." autocomplete="off"/>
+            <button id="actionButton" class="action-button voice-mode" title="לחץ להקלטה">🎤</button>
         </div>
         <audio id="audioPlayer" style="display:none;" preload="auto"></audio>
     </div>
@@ -315,7 +295,6 @@
         class ChatApp {
             constructor() {
                 this.threadId = null;
-                this.currentRequest = null;
                 this.pendingMessages = [];
                 this.isProcessing = false;
                 this.processTimeout = null;
@@ -323,8 +302,8 @@
                 this.isRecording = false;
                 this.speechRecognition = null;
                 this.silenceTimer = null;
-                this.lastSpeechTime = 0;
                 this.currentTranscript = '';
+                this.duplicateCounter = 0; // למניעת כפילויות
 
                 this.initElements();
                 this.bindEvents();
@@ -335,8 +314,7 @@
             initElements() {
                 this.chatMessages = document.getElementById('chatMessages');
                 this.messageInput = document.getElementById('messageInput');
-                this.sendButton = document.getElementById('sendButton');
-                this.voiceButton = document.getElementById('voiceButton');
+                this.actionButton = document.getElementById('actionButton');
                 this.muteButton = document.getElementById('muteButton');
                 this.audioPlayer = document.getElementById('audioPlayer');
                 
@@ -344,21 +322,68 @@
             }
 
             bindEvents() {
-                this.sendButton.addEventListener('click', () => this.sendMessage());
+                // כפתור פעולה - מיקרופון או שליחה
+                this.actionButton.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    if (this.isInSendMode()) {
+                        this.sendMessage();
+                    } else {
+                        this.startRecording();
+                    }
+                });
+
+                this.actionButton.addEventListener('mouseup', (e) => {
+                    e.preventDefault();
+                    if (this.isRecording) {
+                        // לא עוצר כאן - רק בשתיקה
+                    }
+                });
+
+                // תמיכה במובייל
+                this.actionButton.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    if (this.isInSendMode()) {
+                        this.sendMessage();
+                    } else {
+                        this.startRecording();
+                    }
+                });
+
+                // שדה הכתיבה
                 this.messageInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         this.sendMessage();
                     }
                 });
+
                 this.messageInput.addEventListener('input', () => {
-                    this.updateUI();
+                    this.updateButtonMode();
+                    
+                    // ביטול בקשה קודמת אם מתחיל להקליד
                     if (this.isProcessing && this.messageInput.value.length === 1) {
                         this.cancelCurrentRequest();
                     }
                 });
-                this.voiceButton.addEventListener('click', () => this.toggleRecording());
+
+                // כפתור השתקה
                 this.muteButton.addEventListener('click', () => this.toggleMute());
+            }
+
+            isInSendMode() {
+                return this.messageInput.value.trim().length > 0 && !this.isRecording;
+            }
+
+            updateButtonMode() {
+                if (this.isInSendMode()) {
+                    this.actionButton.className = 'action-button send-mode';
+                    this.actionButton.textContent = '➤';
+                    this.actionButton.title = 'שלח הודעה';
+                } else {
+                    this.actionButton.className = 'action-button voice-mode';
+                    this.actionButton.textContent = '🎤';
+                    this.actionButton.title = 'לחץ להקלטה';
+                }
             }
 
             initVoiceCapabilities() {
@@ -385,8 +410,7 @@
                         if (finalTranscript || interimTranscript) {
                             this.currentTranscript = finalTranscript || interimTranscript;
                             this.messageInput.value = this.currentTranscript;
-                            this.updateUI();
-                            this.lastSpeechTime = Date.now();
+                            this.updateButtonMode();
                             this.resetSilenceTimer();
                         }
                     };
@@ -409,13 +433,9 @@
                         console.error('שגיאה בזיהוי קול:', event.error);
                         if (event.error === 'not-allowed') {
                             alert('יש לאשר גישה למיקרופון בהגדרות הדפדפן');
-                            this.stopRecording();
                         }
+                        this.stopRecording();
                     };
-                } else {
-                    this.voiceButton.disabled = true;
-                    this.voiceButton.title = 'הקלטה לא נתמכת בדפדפן הזה';
-                    console.warn('SpeechRecognition not supported');
                 }
             }
 
@@ -430,28 +450,20 @@
                         this.sendMessage();
                         this.stopRecording();
                     }
-                }, 2000); // 2 שניות שתיקה
-            }
-
-            toggleRecording() {
-                if (this.isRecording) {
-                    this.stopRecording();
-                } else {
-                    this.startRecording();
-                }
+                }, 1000); // 1 שנייה שתיקה כמו שביקשת
             }
 
             startRecording() {
                 if (!this.speechRecognition || this.isRecording) return;
 
                 this.isRecording = true;
-                this.voiceButton.classList.add('recording');
-                this.voiceButton.textContent = '🔴';
-                this.voiceButton.title = 'לחץ להפסקת הקלטה';
+                this.actionButton.classList.add('recording');
+                this.actionButton.textContent = '🔴';
+                this.actionButton.title = 'מקליט...';
                 
                 this.messageInput.value = '';
                 this.currentTranscript = '';
-                this.messageInput.focus();
+                this.messageInput.placeholder = 'מקליט...';
                 
                 try {
                     this.speechRecognition.start();
@@ -467,9 +479,8 @@
                 if (!this.isRecording) return;
 
                 this.isRecording = false;
-                this.voiceButton.classList.remove('recording');
-                this.voiceButton.textContent = '🎤';
-                this.voiceButton.title = 'לחץ להתחלת הקלטה';
+                this.actionButton.classList.remove('recording');
+                this.messageInput.placeholder = 'כתוב הודעה או החזק להקלטה...';
                 
                 if (this.silenceTimer) {
                     clearTimeout(this.silenceTimer);
@@ -484,6 +495,7 @@
                     }
                 }
                 
+                this.updateButtonMode();
                 console.log('הקלטה נעצרה');
             }
 
@@ -512,9 +524,6 @@
                     console.log('🔊 מנגן אודיו:', audioUrl);
                 } catch (error) {
                     console.error('שגיאה בניגון אודיו:', error);
-                    if (error.name === 'NotAllowedError') {
-                        console.log('נדרש לחצן מיקרופון לאישור שמע');
-                    }
                 }
             }
 
@@ -541,7 +550,6 @@
                 this.chatMessages.appendChild(messageDiv);
                 this.scrollToBottom();
                 
-                // נגן אודיו אם זו הודעת בוט עם קול
                 if (role === 'bot' && audioUrl && !isPending) {
                     setTimeout(() => this.playAudio(audioUrl), 200);
                 }
@@ -592,10 +600,6 @@
             }
 
             cancelCurrentRequest() {
-                if (this.currentRequest) {
-                    this.currentRequest.abort();
-                    this.currentRequest = null;
-                }
                 if (this.processTimeout) {
                     clearTimeout(this.processTimeout);
                     this.processTimeout = null;
@@ -618,14 +622,16 @@
                 this.isProcessing = true;
                 this.showTypingIndicator();
 
+                // למניעת כפילויות - בדיקה נוספת
+                const messageId = `${Date.now()}-${this.duplicateCounter++}`;
+                console.log(`עיבוד הודעות [${messageId}]:`, this.pendingMessages);
+
                 const combinedMessage = this.pendingMessages.join('\n\n');
                 const messageElements = this.chatMessages.querySelectorAll('.pending-message');
                 messageElements.forEach(el => this.updateMessageStatus(el, false));
                 this.pendingMessages = [];
 
                 try {
-                    console.log('שולח הודעה לשרת:', combinedMessage);
-                    
                     const response = await fetch('/api/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -634,8 +640,6 @@
                             threadId: this.threadId 
                         })
                     });
-
-                    console.log('תגובת שרת - Status:', response.status);
 
                     if (!response.ok) {
                         const errorText = await response.text();
@@ -649,28 +653,24 @@
                     const botReply = data.reply || 'לא התקבלה תשובה 😕';
                     const audioUrl = data.audioUrl;
                     
-                    console.log('תגובת בוט:', botReply);
-                    console.log('URL אודיו:', audioUrl);
-                    
+                    console.log(`תגובה [${messageId}]:`, botReply);
                     this.addMessage('bot', botReply, false, audioUrl);
 
                 } catch (error) {
                     console.error('שגיאה בעיבוד הודעות:', error);
                     this.hideTypingIndicator();
-                    if (error.name === 'AbortError') return;
                     this.addMessage('bot', `שגיאה בחיבור לשרת: ${error.message} 😵`);
                 } finally {
                     this.isProcessing = false;
-                    this.currentRequest = null;
                     setTimeout(() => this.messageInput.focus(), 100);
                 }
             }
 
             async startConversation() {
-                const welcomeMessage = 'שלום! אני יואב - מפצח התנגדויות. בוא נתחיל!';
-                this.addMessage('bot', welcomeMessage);
+                // הודעת ברוכים הבאים קבועה
+                this.addMessage('bot', 'ברוכים הבאים!');
                 
-                // שלח הודעת פתיחה לשרת
+                // אחרי שנייה - שליחת הבקשה הראשונה לשרת
                 setTimeout(async () => {
                     try {
                         this.isProcessing = true;
@@ -714,15 +714,10 @@
                 this.pendingMessages.push(text);
                 
                 this.messageInput.value = '';
-                this.updateUI();
+                this.updateButtonMode();
 
                 if (this.isProcessing) this.cancelCurrentRequest();
                 this.scheduleProcessing();
-            }
-
-            updateUI() {
-                this.sendButton.style.background = this.messageInput.value.trim() ? 
-                    'linear-gradient(135deg, #4CAF50, #45a049)' : '#ccc';
             }
         }
 
