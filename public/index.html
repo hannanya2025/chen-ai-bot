@@ -567,14 +567,17 @@
             async processQueue() {
                 if (this.messageQueue.length === 0) return;
                 
-                // אם כבר בעיבוד, מחכה לסיום ואז מתחיל מחדש
+                // אם כבר בעיבוד, פשוט לא עושה כלום - הטיימר ידאג להפעיל שוב
                 if (this.isProcessing) {
-                    console.log('כבר בעיבוד - מחכה לסיום ואז יעבד את התור');
-                    this.startQueueTimer(); // יתחיל מחדש עם דיליי ארוך יותר
+                    console.log('כבר בעיבוד - הודעות חדשות יצטברו בתור');
                     return;
                 }
 
                 this.isProcessing = true;
+                
+                // נותן עוד רגע לאיסוף הודעות נוספות
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
                 console.log('מעבד תור הודעות:', [...this.messageQueue]);
 
                 // מסמן את כל ההודעות הממתינות כ"נשלחו"
@@ -619,10 +622,11 @@
                 } finally {
                     this.isProcessing = false;
                     
-                    // בודק אם יש הודעות חדשות שהצטברו
+                    // אחרי שסיימנו, בודק אם צבירו הודעות חדשות
                     if (this.messageQueue.length > 0) {
-                        console.log('הודעות חדשות בתור, ממשיך עיבוד');
-                        setTimeout(() => this.startQueueTimer(), 100);
+                        console.log('הודעות חדשות בתור לעיבוד:', [...this.messageQueue]);
+                        // מתחיל עיבוד מיידי של ההודעות שהצטברו
+                        setTimeout(() => this.processQueue(), 50);
                     }
                     
                     setTimeout(() => this.messageInput.focus(), 100);
