@@ -218,9 +218,10 @@ async function generateSpeech(text) {
 
     const arrayBuffer = await response.arrayBuffer();
     await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
+    console.log(`🎙️ Audio file created at: ${audioFilePath}`);
     return `/speech-${Date.now()}.mp3`;
   } catch (err) {
-    console.error('Speech generation error:', err);
+    console.error('🎙️ Speech generation error:', err.message);
     throw err;
   } finally {
     setTimeout(() => {
