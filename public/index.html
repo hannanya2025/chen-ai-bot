@@ -130,12 +130,6 @@
             border-top: 1px solid #ddd;
         }
 
-        .voice-controls {
-            display: flex;
-            gap: 5px;
-            align-items: center;
-        }
-
         .voice-button {
             width: 45px;
             height: 45px;
@@ -158,30 +152,6 @@
         }
 
         .voice-button:hover {
-            transform: scale(1.1);
-        }
-
-        .mute-button {
-            width: 35px;
-            height: 35px;
-            border: none;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
-            color: white;
-            font-size: 1rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 5px rgba(149, 165, 166, 0.3);
-        }
-
-        .mute-button.muted {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
-        }
-
-        .mute-button:hover {
             transform: scale(1.1);
         }
 
@@ -290,14 +260,10 @@
         <div class="chat-messages" id="chatMessages"></div>
         
         <div class="input-container">
-            <div class="voice-controls">
-                <button id="voiceButton" class="voice-button" title="לחץ להתחלת הקלטה">🎤</button>
-                <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
-            </div>
-            <input type="text" id="messageInput" class="message-input" placeholder="כתוב את ההודעה שלך או לחץ על המיקרופון..." autocomplete="off"/>
-            <button id="sendButton" class="send-button">➤</button>
+            <button id="voiceButton" class="voice-button" title="לחץ להתחלת הקלטה">🎤</button>
+            <input type="text" id="messageInput" class="message-input" placeholder="כתוב את ההודעה שלך..." autocomplete="off"/>
+            <button id="sendButton" class="send-button" style="display:none;">➤</button>
         </div>
-        <audio id="audioPlayer" style="display:none;" preload="auto"></audio>
     </div>
 
     <script>
@@ -326,8 +292,8 @@
                 this.messageInput = document.getElementById('messageInput');
                 this.sendButton = document.getElementById('sendButton');
                 this.voiceButton = document.getElementById('voiceButton');
-                this.muteButton = document.getElementById('muteButton');
-                this.audioPlayer = document.getElementById('audioPlayer');
+                this.audioPlayer = document.createElement('audio');
+                this.audioPlayer.setAttribute('style', 'display:none');
                 
                 this.messageInput.focus();
             }
@@ -340,14 +306,15 @@
                         this.sendMessage();
                     }
                 });
+
                 this.messageInput.addEventListener('input', () => {
                     this.updateUI();
                     if (this.isProcessing && this.messageInput.value.length === 1) {
                         this.cancelCurrentRequest();
                     }
                 });
+
                 this.voiceButton.addEventListener('click', () => this.toggleRecording());
-                this.muteButton.addEventListener('click', () => this.toggleMute());
             }
 
             initVoiceCapabilities() {
@@ -382,7 +349,6 @@
 
                     this.speechRecognition.onend = () => {
                         if (this.isRecording) {
-                            // נסה להתחיל שוב אוטומטית
                             setTimeout(() => {
                                 if (this.isRecording) {
                                     try {
@@ -409,20 +375,6 @@
                 }
             }
 
-            resetSilenceTimer() {
-                if (this.silenceTimer) {
-                    clearTimeout(this.silenceTimer);
-                }
-                
-                this.silenceTimer = setTimeout(() => {
-                    if (this.isRecording && this.messageInput.value.trim()) {
-                        console.log('שתיקה זוהתה - שולח הודעה');
-                        this.sendMessage();
-                        this.stopRecording();
-                    }
-                }, 2000); // 2 שניות שתיקה
-            }
-
             toggleRecording() {
                 if (this.isRecording) {
                     this.stopRecording();
@@ -445,8 +397,6 @@
                 
                 try {
                     this.speechRecognition.start();
-                    this.resetSilenceTimer();
-                    console.log('הקלטה התחילה');
                 } catch (error) {
                     console.error('שגיאה בהתחלת הקלטה:', error);
                     this.stopRecording();
@@ -461,11 +411,6 @@
                 this.voiceButton.textContent = '🎤';
                 this.voiceButton.title = 'לחץ להתחלת הקלטה';
                 
-                if (this.silenceTimer) {
-                    clearTimeout(this.silenceTimer);
-                    this.silenceTimer = null;
-                }
-                
                 if (this.speechRecognition) {
                     try {
                         this.speechRecognition.stop();
@@ -473,42 +418,36 @@
                         console.error('שגיאה בעצירת הקלטה:', error);
                     }
                 }
-                
-                console.log('הקלטה נעצרה');
             }
 
-            toggleMute() {
-                this.isMuted = !this.isMuted;
-                this.muteButton.textContent = this.isMuted ? '🔇' : '🔊';
-                this.muteButton.title = this.isMuted ? 'הפעל קול' : 'השתק קול';
-                this.muteButton.classList.toggle('muted', this.isMuted);
-                
-                if (this.isMuted && !this.audioPlayer.paused) {
-                    this.audioPlayer.pause();
-                }
-                
-                console.log(this.isMuted ? '🔇 קול מושתק' : '🔊 קול מופעל');
-            }
-
-            async playAudio(audioUrl) {
-                if (this.isMuted) {
-                    console.log('🔇 קול מושתק - לא מנגן');
-                    return;
-                }
-                
-                try {
-                    this.audioPlayer.src = audioUrl;
-                    await this.audioPlayer.play();
-                    console.log('🔊 מנגן אודיו:', audioUrl);
-                } catch (error) {
-                    console.error('שגיאה בניגון אודיו:', error);
-                    if (error.name === 'NotAllowedError') {
-                        console.log('נדרש לחצן מיקרופון לאישור שמע');
-                    }
+            updateUI() {
+                if (this.messageInput.value.trim()) {
+                    this.voiceButton.style.display = 'none';
+                    this.sendButton.style.display = 'inline-block';
+                } else {
+                    this.voiceButton.style.display = 'inline-block';
+                    this.sendButton.style.display = 'none';
                 }
             }
 
-            addMessage(role, text, isPending = false, audioUrl = null) {
+            sendMessage() {
+                const text = this.messageInput.value.trim();
+                if (!text) return;
+
+                this.addMessage('user', text, true);
+                this.pendingMessages.push(text);
+                this.messageInput.value = '';
+                this.updateUI();
+
+                this.scheduleProcessing();
+            }
+
+            async startConversation() {
+                const welcomeMessage = 'שלום! אני יואב - מפצח התנגדויות. בוא נתחיל!';
+                this.addMessage('bot', welcomeMessage);
+            }
+
+            addMessage(role, text, isPending = false) {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${role}-message ${isPending ? 'pending-message' : ''}`;
                 
@@ -530,190 +469,12 @@
                 
                 this.chatMessages.appendChild(messageDiv);
                 this.scrollToBottom();
-                
-                // נגן אודיו אם זו הודעת בוט עם קול
-                if (role === 'bot' && audioUrl && !isPending) {
-                    setTimeout(() => this.playAudio(audioUrl), 200);
-                }
-                
-                setTimeout(() => this.messageInput.focus(), 50);
-                return messageDiv;
-            }
-
-            updateMessageStatus(messageElement, isPending) {
-                if (isPending) {
-                    messageElement.classList.add('pending-message');
-                } else {
-                    messageElement.classList.remove('pending-message');
-                }
-            }
-
-            showTypingIndicator() {
-                this.hideTypingIndicator();
-                
-                const typingDiv = document.createElement('div');
-                typingDiv.className = 'typing-indicator show';
-                typingDiv.id = 'typingIndicator';
-                
-                const avatar = document.createElement('div');
-                avatar.className = 'avatar bot-avatar';
-                avatar.textContent = '🤖';
-                
-                const dotsDiv = document.createElement('div');
-                dotsDiv.className = 'typing-dots';
-                dotsDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
-                
-                typingDiv.appendChild(avatar);
-                typingDiv.appendChild(dotsDiv);
-                
-                this.chatMessages.appendChild(typingDiv);
-                this.scrollToBottom();
-            }
-
-            hideTypingIndicator() {
-                const typingIndicator = document.getElementById('typingIndicator');
-                if (typingIndicator) typingIndicator.remove();
             }
 
             scrollToBottom() {
                 setTimeout(() => {
                     this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
                 }, 100);
-            }
-
-            cancelCurrentRequest() {
-                if (this.currentRequest) {
-                    this.currentRequest.abort();
-                    this.currentRequest = null;
-                }
-                if (this.processTimeout) {
-                    clearTimeout(this.processTimeout);
-                    this.processTimeout = null;
-                }
-                this.hideTypingIndicator();
-                this.isProcessing = false;
-                console.log('בקשה נוכחית בוטלה');
-            }
-
-            scheduleProcessing() {
-                if (this.processTimeout) clearTimeout(this.processTimeout);
-                this.processTimeout = setTimeout(() => {
-                    if (this.pendingMessages.length > 0) this.processPendingMessages();
-                }, 1500);
-            }
-
-            async processPendingMessages() {
-                if (this.isProcessing || this.pendingMessages.length === 0) return;
-
-                this.isProcessing = true;
-                this.showTypingIndicator();
-
-                const combinedMessage = this.pendingMessages.join('\n\n');
-                const messageElements = this.chatMessages.querySelectorAll('.pending-message');
-                messageElements.forEach(el => this.updateMessageStatus(el, false));
-                this.pendingMessages = [];
-
-                try {
-                    console.log('שולח להודעה לשרת:', combinedMessage);
-                    
-                    const response = await fetch('/api/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            message: combinedMessage, 
-                            threadId: this.threadId 
-                        })
-                    });
-
-                    console.log('תגובת שרת - Status:', response.status);
-
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(`Server error ${response.status}: ${errorText}`);
-                    }
-
-                    const data = await response.json();
-                    this.hideTypingIndicator();
-
-                    this.threadId = data.threadId;
-                    const botReply = data.reply || 'לא התקבלה תשובה 😕';
-                    const audioUrl = data.audioUrl;
-                    
-                    console.log('תגובת בוט:', botReply);
-                    console.log('URL אודיו:', audioUrl);
-                    
-                    this.addMessage('bot', botReply, false, audioUrl);
-
-                } catch (error) {
-                    console.error('שגיאה בעיבוד הודעות:', error);
-                    this.hideTypingIndicator();
-                    if (error.name === 'AbortError') return;
-                    this.addMessage('bot', `שגיאה בחיבור לשרת: ${error.message} 😵`);
-                } finally {
-                    this.isProcessing = false;
-                    this.currentRequest = null;
-                    setTimeout(() => this.messageInput.focus(), 100);
-                }
-            }
-
-            async startConversation() {
-                const welcomeMessage = 'שלום! אני יואב - מפצח התנגדויות. בוא נתחיל!';
-                this.addMessage('bot', welcomeMessage);
-                
-                // שלח הודעת פתיחה לשרת
-                setTimeout(async () => {
-                    try {
-                        this.isProcessing = true;
-                        this.showTypingIndicator();
-                        
-                        const response = await fetch('/api/chat', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ 
-                                message: 'התחל שיחה',
-                                threadId: this.threadId 
-                            })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.threadId = data.threadId;
-                            
-
-                            this.hideTypingIndicator();
-                            this.addMessage('bot', data.reply, false, data.audioUrl);
-                        } else {
-                            throw new Error('Failed to start conversation');
-                        }
-                    } catch (error) {
-                        console.error('שגיאה בהתחלת שיחה:', error);
-                        this.hideTypingIndicator();
-                        this.addMessage('bot', 'שגיאה בהתחברות לשרת');
-                    } finally {
-                        this.isProcessing = false;
-                    }
-                }, 1000);
-            }
-
-            sendMessage() {
-                const text = this.messageInput.value.trim();
-                if (!text) return;
-
-                console.log('שולח הודעה:', text);
-                
-                this.addMessage('user', text, true);
-                this.pendingMessages.push(text);
-                
-                this.messageInput.value = '';
-                this.updateUI();
-
-                if (this.isProcessing) this.cancelCurrentRequest();
-                this.scheduleProcessing();
-            }
-
-            updateUI() {
-                this.sendButton.style.background = this.messageInput.value.trim() ? 
-                    'linear-gradient(135deg, #4CAF50, #45a049)' : '#ccc';
             }
         }
 
