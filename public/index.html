@@ -676,6 +676,9 @@
 
                 console.log('שולח הודעה:', text);
                 
+                // מבטל בקשה קודמת אם קיימת, אבל שומר את ההודעות הקודמות בתור
+                if (this.isProcessing) this.cancelCurrentRequest();
+                
                 this.addMessage('user', text, true);
                 this.pendingMessages.push(text);
                 
@@ -684,8 +687,8 @@
                 this.currentTranscript = '';
                 this.updateButtonMode();
 
-                if (this.isProcessing) this.cancelCurrentRequest();
-                this.scheduleProcessing();
+                // מפעיל עיבוד רק אם לא בעיצומו
+                if (!this.isProcessing) this.scheduleProcessing();
             }
         }
 
