@@ -590,7 +590,7 @@
                 this.showTypingIndicator();
 
                 const messageId = `${Date.now()}-${this.duplicateCounter++}`;
-                console.log(`עיבוד הודעות [${messageId}]:`, [...this.pendingMessages]);
+                console.log(`עיבוד הודעות [${messageId}] - תור לפני שליחה:`, [...this.pendingMessages]);
 
                 const combinedMessage = this.pendingMessages.join('\n\n');
                 const messageElements = this.chatMessages.querySelectorAll('.pending-message');
@@ -627,8 +627,9 @@
                     this.pendingMessages = []; // מרוקן גם במקרה של שגיאה
                 } finally {
                     this.isProcessing = false;
-                    // בודק אם יש הודעות חדשות שחיכו והפעיל מחדש אם צריך
+                    // בודק אם יש הודעות חדשות שהצטברו בזמן העיבוד
                     if (this.pendingMessages.length > 0) {
+                        console.log('הודעות חדשות ממתינות, מפעיל מחדש:', [...this.pendingMessages]);
                         this.scheduleProcessing();
                     }
                     setTimeout(() => this.messageInput.focus(), 100);
@@ -685,7 +686,12 @@
                 this.currentTranscript = '';
                 this.updateButtonMode();
 
-                this.scheduleProcessing();
+                // אם העיבוד כבר רץ, פשוט מוסיף להודעות ולא מפעיל מחדש
+                if (!this.isProcessing) {
+                    this.scheduleProcessing();
+                } else {
+                    console.log('עיבוד קיים, הודעה חדשה נוספה לתור:', text);
+                }
             }
         }
 
