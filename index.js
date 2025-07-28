@@ -6,8 +6,6 @@ import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import fs from 'fs';
 import { promisify } from 'util';
-import { pipeline } from 'stream';
-import { createWriteStream } from 'fs';
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -199,34 +197,36 @@ async function generateSpeech(text) {
   if (!OPENAI_KEY) throw new Error('Missing OPENAI_KEY');
 
   const audioFilePath = path.join(__dirname, 'public', `speech-${Date.now()}.mp3`);
-  const response = await fetch('https://api.openai.com/v1/audio/speech', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENAI_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'tts-1',
-      voice: 'alloy',
-      input: text,
-      response_format: 'mp3'
-    })
-  });
+  try {
+    const response = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        voice: 'alloy',
+        input: text,
+        response_format: 'mp3'
+      })
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to generate speech: ${response.statusText}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
-
-  setTimeout(() => {
-    if (fs.existsSync(audioFilePath)) {
-      fs.unlinkSync(audioFilePath);
+    if (!response.ok) {
+      throw new Error(`Failed to generate speech: ${response.status} - ${await response.text()}`);
     }
-  }, 300000);
 
-  return `/speech-${Date.now()}.mp3`;
+    const arrayBuffer = await response.arrayBuffer();
+    await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
+    return `/speech-${Date.now()}.mp3`;
+  } catch (err) {
+    console.error('Speech generation error:', err);
+    throw err;
+  } finally {
+    setTimeout(() => {
+      if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    }, 300000);
+  }
 }
 
 // פונקציה לעיבוד הודעות עם המתנה להקלדה
@@ -284,6 +284,8 @@ async function processMessages(threadId) {
   try {
     const OPENAI_KEY = process.env.OPENAI_KEY;
     const ASSISTANT_ID = process.env.ASSISTANT_ID;
+
+    if (!OPENAI_KEY || !ASSISTANT_ID) throw new Error('Missing API keys');
 
     const messageRes = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
       method: 'POST',
@@ -403,7 +405,8 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const result = await scheduleProcessing(threadId, message);
-    res.json(await result);
+    const { reply, audioUrl } = await result;
+    res.json({ reply, threadId, audioUrl });
 
   } catch (err) {
     res.status(500).json({ error: err.message || 'Server error' });
