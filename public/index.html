@@ -758,24 +758,45 @@
                     const utterance = new SpeechSynthesisUtterance(cleanText);
                     utterance.lang = 'he-IL';
                     utterance.rate = 1.2; // מהירות דיבור מעט מואצת - כמו מוכר אמיתי
-                    utterance.pitch = 1.1; // גובה קול מעט יותר גבוה - נשמע יותר אנרגטי
+                    utterance.pitch = 0.8; // גובה קול נמוך יותר - קול גברי
                     utterance.volume = 0.9;
                     
                     // המתנה לטעינת קולות ואז בחירת הטוב ביותר
                     const setVoiceAndSpeak = () => {
                         const voices = this.speechSynthesis.getVoices();
                         
-                        // מחפש קול עברי טוב - לפי סדר עדיפות
-                        const preferredVoices = [
-                            voices.find(v => v.lang === 'he-IL' && v.name.includes('Enhanced')),
-                            voices.find(v => v.lang === 'he-IL'),
-                            voices.find(v => v.lang.includes('he')),
-                            voices.find(v => v.name.includes('Hebrew')),
-                        ];
+                        // מחפש קול עברי גברי - לפי סדר עדיפות
+                        const maleVoices = voices.filter(v => 
+                            (v.lang === 'he-IL' || v.lang.includes('he') || v.name.includes('Hebrew')) &&
+                            (v.name.toLowerCase().includes('male') || 
+                             v.name.toLowerCase().includes('man') ||
+                             v.name.toLowerCase().includes('david') ||
+                             v.name.toLowerCase().includes('moshe') ||
+                             v.name.toLowerCase().includes('daniel') ||
+                             !v.name.toLowerCase().includes('female') &&
+                             !v.name.toLowerCase().includes('woman'))
+                        );
                         
-                        const selectedVoice = preferredVoices.find(v => v);
+                        // אם יש קול גברי עברי - תשתמש בו
+                        let selectedVoice = maleVoices.find(v => v.lang === 'he-IL');
+                        
+                        // אם לא, קח כל קול עברי זמין
+                        if (!selectedVoice) {
+                            selectedVoice = voices.find(v => v.lang === 'he-IL' || v.lang.includes('he'));
+                        }
+                        
+                        // אם לא מצאנו עברי, קח קול גברי באנגלית עם pitch נמוך
+                        if (!selectedVoice) {
+                            selectedVoice = maleVoices[0] || voices.find(v => 
+                                v.name.toLowerCase().includes('male') || 
+                                v.name.toLowerCase().includes('david')
+                            );
+                            utterance.pitch = 0.7; // עוד יותר נמוך לקול גברי
+                        }
+                        
                         if (selectedVoice) {
                             utterance.voice = selectedVoice;
+                            console.log('נבחר קול:', selectedVoice.name, selectedVoice.lang);
                         }
                         
                         this.speechSynthesis.speak(utterance);
