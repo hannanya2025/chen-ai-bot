@@ -130,30 +130,6 @@
             border-top: 1px solid #ddd;
         }
 
-        .mute-button {
-            width: 35px;
-            height: 35px;
-            border: none;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
-            color: white;
-            font-size: 1rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 5px rgba(149, 165, 166, 0.3);
-        }
-
-        .mute-button.muted {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
-        }
-
-        .mute-button:hover {
-            transform: scale(1.1);
-        }
-
         .message-input {
             flex: 1;
             padding: 12px 20px;
@@ -284,7 +260,6 @@
         <div class="chat-messages" id="chatMessages"></div>
 
         <div class="input-container">
-            <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
             <input type="text" id="messageInput" class="message-input" placeholder="כתוב הודעה או החזק להקלטה..." autocomplete="off"/>
             <button id="actionButton" class="action-button voice-mode" title="לחץ להקלטה">🎤</button>
         </div>
@@ -297,13 +272,11 @@
                 this.pendingMessages = [];
                 this.isProcessing = false;
                 this.processTimeout = null;
-                this.isMuted = false;
                 this.isRecording = false;
                 this.speechRecognition = null;
                 this.silenceTimer = null;
                 this.currentTranscript = '';
                 this.duplicateCounter = 0;
-                this.lastBotResponse = ''; // לשמור את התגובה האחרונה
 
                 this.initElements();
                 this.bindEvents();
@@ -315,7 +288,6 @@
                 this.chatMessages = document.getElementById('chatMessages');
                 this.messageInput = document.getElementById('messageInput');
                 this.actionButton = document.getElementById('actionButton');
-                this.muteButton = document.getElementById('muteButton');
                 
                 this.messageInput.focus();
             }
@@ -356,8 +328,6 @@
                 this.messageInput.addEventListener('input', () => {
                     this.updateButtonMode();
                 });
-
-                this.muteButton.addEventListener('click', () => this.toggleMute());
             }
 
             isInSendMode() {
@@ -490,15 +460,6 @@
                 console.log('הקלטה נעצרה');
             }
 
-            toggleMute() {
-                this.isMuted = !this.isMuted;
-                this.muteButton.textContent = this.isMuted ? '🔇' : '🔊';
-                this.muteButton.title = this.isMuted ? 'הפעל קול' : 'השתק קול';
-                this.muteButton.classList.toggle('muted', this.isMuted);
-                
-                console.log(this.isMuted ? '🔇 קול מושתק' : '🔊 קול מופעל');
-            }
-
             addMessage(role, text, isPending = false) {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${role}-message ${isPending ? 'pending-message' : ''}`;
@@ -591,9 +552,18 @@
                 this.showTypingIndicator();
 
                 const messageId = `${Date.now()}-${this.duplicateCounter++}`;
-                console.log(`עיבוד הודעות [${messageId}] - תור לפני שליחה:`, [...this.pendingMessages]);
+                console.log(`עיבוד הודעות [${messageId}] - תור לפני בדיקה:`, [...this.pendingMessages]);
 
-                const combinedMessage = this.pendingMessages.join('\n\n');
+                // בודק אם נוספו הודעות חדשות לפני השליחה
+                await new Promise(resolve => setTimeout(resolve, 100)); // המתנה קצרה לבדיקת עדכונים
+                const updatedMessages = [...this.pendingMessages];
+                console.log(`תור לאחר בדיקה [${messageId}]:`, updatedMessages);
+
+                if (updatedMessages.length > 1) {
+                    console.log(`מזג הודעות [${messageId}]:`, updatedMessages.join('\n\n'));
+                }
+
+                const combinedMessage = updatedMessages.join('\n\n');
                 const messageElements = this.chatMessages.querySelectorAll('.pending-message');
                 messageElements.forEach(el => this.updateMessageStatus(el, false));
 
@@ -603,13 +573,12 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                             message: combinedMessage, 
-                            threadId: this.threadId,
-                            context: this.lastBotResponse // שולח את התגובה האחרונה כקונטקסט
+                            threadId: this.threadId 
                         })
                     });
 
                     if (!response.ok) {
-                        throw new Error(`Server error ${response.status}`);
+                        throw new Error(`Server error ${response.status}: ${await response.text()}`);
                     }
 
                     const data = await response.json();
@@ -617,7 +586,6 @@
 
                     this.threadId = data.threadId;
                     const botReply = data.reply || 'לא התקבלה תשובה 😕';
-                    this.lastBotResponse = botReply; // שומר את התגובה האחרונה
                     
                     console.log(`תגובה [${messageId}]:`, botReply);
                     this.addMessage('bot', botReply);
@@ -662,9 +630,8 @@
                             
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply);
-                            this.lastBotResponse = data.reply; // שומר את התגובה הראשונית
                         } else {
-                            throw new Error('Failed to start conversation');
+                            throw new Error(`Failed to start conversation: ${await response.text()}`);
                         }
                     } catch (error) {
                         console.error('שגיאה בהתחלת שיחה:', error);
@@ -690,7 +657,7 @@
                 this.currentTranscript = '';
                 this.updateButtonMode();
 
-                // אם העיבוד כבר רץ, פשוט מוסיף להודעות וממתין לתור הבא
+                // אם העיבוד כבר רץ, ממתין לתור הבא
                 if (!this.isProcessing) {
                     this.scheduleProcessing();
                 } else {
