@@ -130,6 +130,72 @@
             border-top: 1px solid #ddd;
         }
 
+        .voice-button {
+            width: 45px;
+            height: 45px;
+            border: none;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 3px 10px rgba(255, 107, 107, 0.3);
+            position: relative;
+        }
+
+        .voice-button::after {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a52, #ff6b6b);
+            z-index: -1;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .voice-button.recording {
+            background: linear-gradient(135deg, #ff4757, #ff3838);
+            animation: pulse 1.5s infinite;
+        }
+
+        .voice-button.recording::after {
+            opacity: 1;
+            animation: rotate 2s linear infinite;
+        }
+
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .voice-button:hover:not(:disabled) {
+            transform: scale(1.1);
+        }
+
+        .voice-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(255, 107, 107, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 107, 107, 0);
+            }
+        }
+
         .message-input {
             flex: 1;
             padding: 12px 20px;
@@ -273,11 +339,14 @@
         </div>
         
         <div class="input-container">
+            <button id="voiceButton" class="voice-button" title="לחץ והחזק לדיבור">
+                🎤
+            </button>
             <input 
                 type="text" 
                 id="messageInput" 
                 class="message-input" 
-                placeholder="כתוב את ההודעה שלך..."
+                placeholder="כתוב את ההודעה שלך או לחץ על המיקרופון..."
                 autocomplete="off"
             />
             <button id="sendButton" class="send-button">
@@ -295,8 +364,16 @@
                 this.isProcessing = false; // האם יש עיבוד פעיל
                 this.processTimeout = null; // timeout לעיבוד מאוחר
                 
+                // יכולות קוליות
+                this.isRecording = false;
+                this.mediaRecorder = null;
+                this.audioChunks = [];
+                this.speechRecognition = null;
+                this.speechSynthesis = window.speechSynthesis;
+                
                 this.initElements();
                 this.bindEvents();
+                this.initVoiceCapabilities();
                 this.startConversation();
             }
 
@@ -304,6 +381,7 @@
                 this.chatMessages = document.getElementById('chatMessages');
                 this.messageInput = document.getElementById('messageInput');
                 this.sendButton = document.getElementById('sendButton');
+                this.voiceButton = document.getElementById('voiceButton');
                 
                 this.messageInput.focus();
             }
@@ -325,6 +403,21 @@
                     if (this.isProcessing && this.messageInput.value.length === 1) {
                         this.cancelCurrentRequest();
                     }
+                });
+
+                // אירועי קול
+                this.voiceButton.addEventListener('mousedown', () => this.startRecording());
+                this.voiceButton.addEventListener('mouseup', () => this.stopRecording());
+                this.voiceButton.addEventListener('mouseleave', () => this.stopRecording());
+                
+                // תמיכה במובייל
+                this.voiceButton.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.startRecording();
+                });
+                this.voiceButton.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    this.stopRecording();
                 });
             }
 
@@ -480,7 +573,13 @@
                     
                     if (response.ok) {
                         this.threadId = data.threadId;
-                        this.addMessage('bot', data.reply || 'לא התקבלה תשובה 😕');
+                        const botReply = data.reply || 'לא התקבלה תשובה 😕';
+                        this.addMessage('bot', botReply);
+                        
+                        // הקראת התגובה בקול
+                        setTimeout(() => {
+                            this.speakBotResponse(botReply);
+                        }, 300);
                     } else {
                         this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
                     }
@@ -529,7 +628,13 @@
                             this.threadId = data.threadId;
                             
                             this.hideTypingIndicator();
-                            this.addMessage('bot', data.reply);
+                            const botReply = data.reply;
+                            this.addMessage('bot', botReply);
+                            
+                            // הקראת התגובה בקול
+                            setTimeout(() => {
+                                this.speakBotResponse(botReply);
+                            }, 300);
                             
                         } catch (error) {
                             if (error.name !== 'AbortError') {
@@ -578,6 +683,110 @@
                     this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
                 } else {
                     this.sendButton.style.background = '#ccc';
+                }
+            }
+
+            // יכולות קוליות
+            async initVoiceCapabilities() {
+                try {
+                    // בדיקת תמיכה בזיהוי קול
+                    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                        this.speechRecognition = new SpeechRecognition();
+                        this.speechRecognition.lang = 'he-IL';
+                        this.speechRecognition.continuous = false;
+                        this.speechRecognition.interimResults = false;
+
+                        this.speechRecognition.onresult = (event) => {
+                            const transcript = event.results[0][0].transcript;
+                            this.messageInput.value = transcript;
+                            this.updateUI();
+                            // שליחה אוטומטית אחרי זיהוי קול
+                            setTimeout(() => this.sendMessage(), 500);
+                        };
+
+                        this.speechRecognition.onerror = (event) => {
+                            console.error('שגיאה בזיהוי קול:', event.error);
+                            this.stopRecording();
+                        };
+                    }
+                } catch (error) {
+                    console.error('שגיאה באתחול יכולות קוליות:', error);
+                }
+            }
+
+            startRecording() {
+                if (!this.speechRecognition || this.isRecording) return;
+
+                this.isRecording = true;
+                this.voiceButton.classList.add('recording');
+                this.voiceButton.textContent = '🔴';
+                
+                try {
+                    this.speechRecognition.start();
+                } catch (error) {
+                    console.error('שגיאה בהתחלת הקלטה:', error);
+                    this.stopRecording();
+                }
+            }
+
+            stopRecording() {
+                if (!this.isRecording) return;
+
+                this.isRecording = false;
+                this.voiceButton.classList.remove('recording');
+                this.voiceButton.textContent = '🎤';
+                
+                if (this.speechRecognition) {
+                    try {
+                        this.speechRecognition.stop();
+                    } catch (error) {
+                        console.error('שגיאה בעצירת הקלטה:', error);
+                    }
+                }
+            }
+
+            // הקראת תגובת הבוט בקול
+            speakBotResponse(text) {
+                if (this.speechSynthesis && 'speechSynthesis' in window) {
+                    // עצירת דיבור קודם
+                    this.speechSynthesis.cancel();
+                    
+                    // ניקוי טקסט מאימוג'י ותווים מיוחדים לדיבור טוב יותר
+                    const cleanText = text.replace(/[🤖😊🔥💪🎯👑😅🚀💯✅❌]/g, '');
+                    
+                    const utterance = new SpeechSynthesisUtterance(cleanText);
+                    utterance.lang = 'he-IL';
+                    utterance.rate = 1.2; // מהירות דיבור מעט מואצת - כמו מוכר אמיתי
+                    utterance.pitch = 1.1; // גובה קול מעט יותר גבוה - נשמע יותר אנרגטי
+                    utterance.volume = 0.9;
+                    
+                    // המתנה לטעינת קולות ואז בחירת הטוב ביותר
+                    const setVoiceAndSpeak = () => {
+                        const voices = this.speechSynthesis.getVoices();
+                        
+                        // מחפש קול עברי טוב - לפי סדר עדיפות
+                        const preferredVoices = [
+                            voices.find(v => v.lang === 'he-IL' && v.name.includes('Enhanced')),
+                            voices.find(v => v.lang === 'he-IL'),
+                            voices.find(v => v.lang.includes('he')),
+                            voices.find(v => v.name.includes('Hebrew')),
+                        ];
+                        
+                        const selectedVoice = preferredVoices.find(v => v);
+                        if (selectedVoice) {
+                            utterance.voice = selectedVoice;
+                        }
+                        
+                        this.speechSynthesis.speak(utterance);
+                    };
+                    
+                    // אם הקולות עדיין לא נטענו
+                    if (this.speechSynthesis.getVoices().length === 0) {
+                        this.speechSynthesis.onvoiceschanged = setVoiceAndSpeak;
+                    } else {
+                        setVoiceAndSpeak();
+                    }
                 }
             }
         }
