@@ -220,7 +220,13 @@ async function generateSpeech(text) {
   const arrayBuffer = await response.arrayBuffer();
   await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
 
-  // מחזיר URL זמני לקובץ
+  // מחזיר URL זמני ומחק את הקובץ אחרי 5 דקות
+  setTimeout(() => {
+    if (fs.existsSync(audioFilePath)) {
+      fs.unlinkSync(audioFilePath);
+    }
+  }, 300000); // 5 דקות
+
   return `/speech-${Date.now()}.mp3`;
 }
 
