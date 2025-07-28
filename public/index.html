@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>יואב - מפצח התנגדויות</title>
     <style>
-        /* CSS for the chat interface */
         * {
             margin: 0;
             padding: 0;
@@ -157,6 +156,30 @@
             transform: scale(1.1);
         }
 
+        .mute-button {
+            width: 35px;
+            height: 35px;
+            border: none;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+            color: white;
+            font-size: 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(149, 165, 166, 0.3);
+        }
+
+        .mute-button.muted {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+        }
+
+        .mute-button:hover {
+            transform: scale(1.1);
+        }
+
         .message-input {
             flex: 1;
             padding: 12px 20px;
@@ -194,12 +217,53 @@
             transform: none;
         }
 
+        .typing-indicator {
+            display: none;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .typing-indicator.show {
+            display: flex;
+        }
+
+        .typing-dots {
+            background: white;
+            padding: 12px 16px;
+            border-radius: 18px;
+            border-bottom-left-radius: 5px;
+            margin-right: 40px;
+            display: flex;
+            gap: 4px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #999;
+            animation: typing 1.4s infinite;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+            30% { transform: translateY(-10px); opacity: 1; }
+        }
+
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(255, 107, 107, 0); }
             100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0); }
         }
-
     </style>
 </head>
 <body>
@@ -214,6 +278,7 @@
         <div class="input-container">
             <div class="voice-controls">
                 <button id="voiceButton" class="voice-button" title="לחץ להתחלת הקלטה">🎤</button>
+                <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
             </div>
             <input type="text" id="messageInput" class="message-input" placeholder="כתוב את ההודעה שלך או לחץ על המיקרופון..." autocomplete="off"/>
             <button id="sendButton" class="send-button">➤</button>
@@ -232,6 +297,7 @@
                 this.lastSpeechTime = 0;
                 this.currentTranscript = '';
                 this.pendingMessages = [];
+                this.firstMessageSent = false;
 
                 this.initElements();
                 this.bindEvents();
@@ -244,6 +310,7 @@
                 this.messageInput = document.getElementById('messageInput');
                 this.sendButton = document.getElementById('sendButton');
                 this.voiceButton = document.getElementById('voiceButton');
+                this.muteButton = document.getElementById('muteButton');
                 this.audioPlayer = document.getElementById('audioPlayer');
 
                 this.messageInput.focus();
@@ -259,6 +326,7 @@
                 });
 
                 this.voiceButton.addEventListener('click', () => this.toggleRecording());
+                this.muteButton.addEventListener('click', () => this.toggleMute());
             }
 
             initVoiceCapabilities() {
@@ -423,14 +491,6 @@
                 return messageDiv;
             }
 
-            updateMessageStatus(messageElement, isPending) {
-                if (isPending) {
-                    messageElement.classList.add('pending-message');
-                } else {
-                    messageElement.classList.remove('pending-message');
-                }
-            }
-
             showTypingIndicator() {
                 this.hideTypingIndicator();
 
@@ -550,7 +610,7 @@
             }
 
             async startConversation() {
-                const welcomeMessage = 'שלום! אני יואב - מפצח התנגדויות. בוא נתחיל!';
+                const welcomeMessage = 'שלום וברוכים הבאים!';
                 this.addMessage('bot', welcomeMessage);
 
                 // שלח הודעת פתיחה לשרת
