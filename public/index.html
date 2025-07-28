@@ -259,17 +259,6 @@
             animation-delay: 0.4s;
         }
 
-        .pending-message {
-            opacity: 0.7;
-            font-style: italic;
-        }
-
-        .pending-message::after {
-            content: " (בהמתנה)";
-            font-size: 0.8em;
-            color: #666;
-        }
-
         @keyframes typing {
             0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
             30% { transform: translateY(-10px); opacity: 1; }
@@ -690,6 +679,7 @@
                             const data = await response.json();
                             this.threadId = data.threadId;
                             
+
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply, false, data.audioUrl);
                         } else {
