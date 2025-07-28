@@ -1,11 +1,13 @@
-// index.js – שרת מתקדם עם סנכרון הקלדה חכם ואיחוד הודעות
-
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
+import fs from 'fs';
+import { promisify } from 'util';
+import { pipeline } from 'stream';
+import { createWriteStream } from 'fs';
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -99,7 +101,7 @@ const systemInstructions = `
     - I – מוטיב פנימי: למה הוא באמת משתוקק? (שקט, שינוי, הצלחה)
     - J – שלב במסע: באיזו בשלות/מודעות הלקוח כרגע?
 - זהה מהר גורם או רכיב דומיננטי, בנה "קוד" פנימי בן 5 (למשל: B3XNR), ובחר איך לעקוף/לנטרל את ההתנגדות.
-- זו עבודה פנימית בלבד – לעולם אל תחשוף, תסביר, תפרש או תשאל את הלקוח על ה-FCBIJ או כל קוד.
+- זו עבודה פנימית בלבד – לעולם אל תחשף, תסביר, תפרש או תשאל את הלקוח על ה-FCBIJ או כל קוד.
 - ענה מיד – תשובה דיבורית, אסרטיבית, שמובילה קדימה לאחת: הצעה, סגירה, גבייה, תיאום או התחייבות.
 - לעולם אל תסיים בשאלה! כל פסקה (או קטע) מסתיימת במסר מוביל, חד או מסכם – אף פעם לא בשאלה.
 
@@ -181,7 +183,7 @@ const systemInstructions = `
 - בזיהוי קונטרה – שלוף שלושה ניסיונות בפיצוח מזוויות שונות, לעולם לא ותרן.
 - אם הכל עוצר – שנה גישה, לחץ או זווית, אך המשך להוביל קדימה בכל מחיר.
 - תמיד התאם את עצמך לסגנון התקשורת של הלקוח - זה הכלי הכי חזק שלך לחיבור.
-- **חזור על המילים והביטויים של הלקוח בכל תגובה** - זה יוצר חיבור מיידי ואמיתי.
+- **חזור על המילים והביטויים של הלקוח בכל תגובה** - זה יוצר חיבור אמיתי ואמיתי.
 - אם הוא אומר "אחי זה טילים" - אתה תענה "אחי, הטילים האלה הם בדיוק מה שצריך..."
 - **אתה מדבר אך ורק על מכירות, עסקים וסימולציות מכירה!** אם מנסים להסיט אותך לנושאים אחרים (מתכונים, בריאות, תחביבים) - החזר את השיחה למכירות באופן טבעי: "אחי, בוא נחזור לעסקים - איך אני יכול לעזור לך להעלות את המכירות?"
 
@@ -191,6 +193,36 @@ const systemInstructions = `
 שיחה מסתיימת תמיד בהובלה אסרטיבית וברורה – לא בשאלה.  
 דבר טבעי, חי ותמיד עם רצף לכיוון סגירה.  
 היות מראה לסגנון התקשורת של הלקוח - זה מה שיוצר חיבור אמיתי.`;
+
+// פונקציה ליצירת קובץ שמע דרך OpenAI TTS
+async function generateSpeech(text) {
+  const OPENAI_KEY = process.env.OPENAI_KEY;
+  const audioFilePath = path.join(__dirname, 'public', `speech-${Date.now()}.mp3`);
+
+  const response = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENAI_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'tts-1',
+      voice: 'alloy', // קול גברי צעיר
+      input: text,
+      response_format: 'mp3'
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to generate speech: ${response.statusText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
+
+  // מחזיר URL זמני לקובץ
+  return `/speech-${Date.now()}.mp3`;
+}
 
 // פונקציה לעיבוד הודעות עם המתנה להקלדה
 async function processMessages(threadId) {
@@ -238,7 +270,6 @@ async function processMessages(threadId) {
     // שליחת הודעת מצב אחרי 5 שניות
     if (waitTime > LONG_PROCESS_NOTIFICATION && !notificationSent) {
       console.log(`💬 Sending "still typing" notification for thread ${threadId}`);
-      // כאן אפשר לשלוח הודעה למשתמש שהבוט ממתין
       notificationSent = true;
     }
     
@@ -359,20 +390,16 @@ async function processMessages(threadId) {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-    console.log(`✅ Got reply for thread ${threadId}, sending to ${currentClients.length} clients`);
+    // יצירת קובץ שמע
+    const audioUrl = await generateSpeech(reply);
 
-    // יצירת מפתח ייחודי לתגובה
-    const responseKey = `${threadId}_${Date.now()}`;
-    processedResponses.set(responseKey, { reply, threadId, timestamp: Date.now() });
+    console.log(`✅ Got reply for thread ${threadId}, sending to ${currentClients.length} clients`);
 
     // שליחת התגובה לכל הלקוחות
     const allClients = currentClients.splice(0);
-    console.log(`📤 Sending unified response to ${allClients.length} clients`);
-    
     allClients.forEach((client, index) => {
       if (client?.resolve) {
-        console.log(`✅ Resolving client ${index}`);
-        client.resolve({ reply, threadId });
+        client.resolve({ reply, threadId, audioUrl });
       }
     });
 
@@ -396,9 +423,6 @@ async function processMessages(threadId) {
     processTimeouts.delete(threadId);
   }
 }
-
-// מאגר תגובות שכבר נשלחו
-const processedResponses = new Map();
 
 // פונקציה לתזמון עיבוד הודעות
 function scheduleProcessing(threadId, message) {
@@ -518,7 +542,7 @@ setInterval(() => {
 
 app.listen(port, () => {
   console.log(`🚀 Advanced server running on port ${port}`);
-  console.log('Features: Smart typing detection, Message unification, Auto cleanup');
+  console.log('Features: Smart typing detection, Message unification, Auto cleanup, OpenAI TTS');
   console.log('Environment check:', {
     hasOpenAIKey: !!process.env.OPENAI_KEY,
     hasAssistantID: !!process.env.ASSISTANT_ID
