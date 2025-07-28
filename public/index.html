@@ -354,10 +354,6 @@
 
                 this.messageInput.addEventListener('input', () => {
                     this.updateButtonMode();
-                    
-                    if (this.isProcessing && this.messageInput.value.trim().length > 0) {
-                        this.cancelCurrentRequest();
-                    }
                 });
 
                 this.muteButton.addEventListener('click', () => this.toggleMute());
@@ -577,13 +573,12 @@
                 }
                 this.hideTypingIndicator();
                 this.isProcessing = false;
-                this.pendingMessages = []; // מאפס את התור כשמבטלים
-                console.log('בקשה נוכחית בוטלה והתור נוקה');
+                console.log('בקשה נוכחית בוטלה');
             }
 
             scheduleProcessing() {
                 if (this.processTimeout) clearTimeout(this.processTimeout);
-                if (!this.isProcessing && this.pendingMessages.length > 0) {
+                if (!this.isProcessing) {
                     this.processPendingMessages();
                 }
             }
@@ -595,7 +590,7 @@
                 this.showTypingIndicator();
 
                 const messageId = `${Date.now()}-${this.duplicateCounter++}`;
-                console.log(`עיבוד הודעות [${messageId}]:`, [...this.pendingMessages]); // דיבאג מלא
+                console.log(`עיבוד הודעות [${messageId}]:`, [...this.pendingMessages]);
 
                 const combinedMessage = this.pendingMessages.join('\n\n');
                 const messageElements = this.chatMessages.querySelectorAll('.pending-message');
@@ -632,6 +627,10 @@
                     this.pendingMessages = []; // מרוקן גם במקרה של שגיאה
                 } finally {
                     this.isProcessing = false;
+                    // בודק אם יש הודעות חדשות שחיכו והפעיל מחדש אם צריך
+                    if (this.pendingMessages.length > 0) {
+                        this.scheduleProcessing();
+                    }
                     setTimeout(() => this.messageInput.focus(), 100);
                 }
             }
@@ -677,11 +676,6 @@
                 if (!text) return;
 
                 console.log('שולח הודעה:', text);
-                
-                // מבטל עיבוד קודם אם קיים ומאחד את ההודעות
-                if (this.isProcessing) {
-                    this.cancelCurrentRequest();
-                }
                 
                 this.addMessage('user', text, true);
                 this.pendingMessages.push(text);
