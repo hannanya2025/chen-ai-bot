@@ -543,16 +543,14 @@
                 } else {
                     messageDiv.appendChild(avatar);
                     messageDiv.appendChild(bubble);
-                    if (audioUrl) {
-                        const audioBtn = document.createElement('button');
-                        audioBtn.textContent = '🎧 נגן קול';
-                        audioBtn.onclick = () => this.playAudio(audioUrl);
-                        messageDiv.appendChild(audioBtn);
-                    }
                 }
                 
                 this.chatMessages.appendChild(messageDiv);
                 this.scrollToBottom();
+                
+                if (audioUrl && !this.isMuted) {
+                    this.playAudio(audioUrl);
+                }
                 
                 setTimeout(() => {
                     this.messageInput.focus();
@@ -669,11 +667,7 @@
                         this.threadId = data.threadId;
                         const botReply = data.reply || 'לא התקבלה תשובה 😕';
                         const audioUrl = data.audioUrl || null;
-                        const messageElement = this.addMessage('bot', botReply, false, audioUrl);
-                        
-                        if (audioUrl) {
-                            this.playAudio(audioUrl);
-                        }
+                        this.addMessage('bot', botReply, false, audioUrl);
                     } else {
                         this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
                     }
@@ -724,10 +718,6 @@
                             const botReply = data.reply;
                             const audioUrl = data.audioUrl || null;
                             this.addMessage('bot', botReply, false, audioUrl);
-                            
-                            if (audioUrl) {
-                                this.playAudio(audioUrl);
-                            }
                         } catch (error) {
                             if (error.name !== 'AbortError') {
                                 this.hideTypingIndicator();
