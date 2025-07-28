@@ -821,12 +821,34 @@
                         
                         let selectedVoice = null;
                         
-                        // 1. מחפש קול עברי (כל מין שהוא)
-                        selectedVoice = voices.find(v => v.lang === 'he-IL' || v.lang.includes('he'));
+                        // 1. מחפש דווקא קול "Hebrew" (הקול הגברי העברי)
+                        selectedVoice = voices.find(v => 
+                            v.name.toLowerCase().includes('hebrew') ||
+                            v.name === 'Hebrew'
+                        );
+                        
                         if (selectedVoice) {
                             utterance.lang = 'he-IL';
-                            utterance.pitch = 0.8; // נמוך יותר לגבר
-                            console.log('✅ נמצא קול עברי:', selectedVoice.name);
+                            utterance.pitch = 0.8; // pitch רגיל כי זה כבר קול גברי
+                            utterance.rate = 1.2; // מהירות רגילה
+                            console.log('✅ נמצא קול Hebrew (גברי):', selectedVoice.name);
+                        }
+                        
+                        // 2. אם לא נמצא Hebrew, חפש כל קול עברי אחר
+                        if (!selectedVoice) {
+                            selectedVoice = voices.find(v => 
+                                v.lang === 'he-IL' || 
+                                v.lang.includes('he') || 
+                                v.name.toLowerCase().includes('idit') ||
+                                v.name.toLowerCase().includes('carmit')
+                            );
+                            
+                            if (selectedVoice) {
+                                utterance.lang = 'he-IL';
+                                utterance.pitch = 0.5; // pitch נמוך אם זה קול נשי
+                                utterance.rate = 1.0;
+                                console.log('✅ משתמש בקול עברי אחר עם pitch נמוך:', selectedVoice.name);
+                            }
                         }
                         
                         // 2. אם אין עברי - קול גברי באנגלית עם הטקסט העברי כמו שהוא
