@@ -301,12 +301,14 @@
         <div class="chat-messages" id="chatMessages"></div>
         
         <div class="input-container">
-            <button id="voiceButton" class="voice-button" title="לחץ להתחלת הקלטה">🎤</button>
-            <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
-            <input type="text" id="messageInput" class="message-input" placeholder="כתוב את ההודעה שלך..." autocomplete="off"/>
+            <div class="voice-controls">
+                <button id="voiceButton" class="voice-button" title="לחץ להתחלת הקלטה">🎤</button>
+                <button id="muteButton" class="mute-button" title="השתק/הפעל קול">🔊</button>
+            </div>
+            <input type="text" id="messageInput" class="message-input" placeholder="כתוב את ההודעה שלך או לחץ על המיקרופון..." autocomplete="off"/>
             <button id="sendButton" class="send-button">➤</button>
         </div>
-        <audio id="audioPlayer" style="display:none;"></audio>
+        <audio id="audioPlayer" style="display:none;" preload="auto"></audio>
     </div>
 
     <script>
@@ -319,8 +321,10 @@
                 this.processTimeout = null;
                 this.isMuted = false;
                 this.isRecording = false;
-                this.audioAllowed = false;
                 this.speechRecognition = null;
+                this.silenceTimer = null;
+                this.lastSpeechTime = 0;
+                this.currentTranscript = '';
 
                 this.initElements();
                 this.bindEvents();
@@ -347,7 +351,12 @@
                         this.sendMessage();
                     }
                 });
-                this.messageInput.addEventListener('input', () => this.updateUI());
+                this.messageInput.addEventListener('input', () => {
+                    this.updateUI();
+                    if (this.isProcessing && this.messageInput.value.length === 1) {
+                        this.cancelCurrentRequest();
+                    }
+                });
                 this.voiceButton.addEventListener('click', () => this.toggleRecording());
                 this.muteButton.addEventListener('click', () => this.toggleMute());
             }
@@ -362,34 +371,67 @@
 
                     this.speechRecognition.onresult = (event) => {
                         let finalTranscript = '';
+                        let interimTranscript = '';
+
                         for (let i = event.resultIndex; i < event.results.length; i++) {
+                            const transcript = event.results[i][0].transcript;
                             if (event.results[i].isFinal) {
-                                finalTranscript += event.results[i][0].transcript;
+                                finalTranscript += transcript;
+                            } else {
+                                interimTranscript += transcript;
                             }
                         }
-                        this.messageInput.value = finalTranscript;
-                        this.updateUI();
+
+                        if (finalTranscript || interimTranscript) {
+                            this.currentTranscript = finalTranscript || interimTranscript;
+                            this.messageInput.value = this.currentTranscript;
+                            this.updateUI();
+                            this.lastSpeechTime = Date.now();
+                            this.resetSilenceTimer();
+                        }
                     };
 
                     this.speechRecognition.onend = () => {
-                        if (this.isRecording && this.messageInput.value.trim()) {
-                            this.sendMessage();
+                        if (this.isRecording) {
+                            // נסה להתחיל שוב אוטומטית
+                            setTimeout(() => {
+                                if (this.isRecording) {
+                                    try {
+                                        this.speechRecognition.start();
+                                    } catch (e) {
+                                        console.error('Failed to restart recognition:', e);
+                                    }
+                                }
+                            }, 100);
                         }
-                        this.stopRecording();
                     };
 
                     this.speechRecognition.onerror = (event) => {
                         console.error('שגיאה בזיהוי קול:', event.error);
-                        this.stopRecording();
                         if (event.error === 'not-allowed') {
-                            alert('אחי, תוודא שהרשית גישה למיקרופון בהגדרות הדפדפן!');
+                            alert('יש לאשר גישה למיקרופון בהגדרות הדפדפן');
+                            this.stopRecording();
                         }
                     };
                 } else {
                     this.voiceButton.disabled = true;
                     this.voiceButton.title = 'הקלטה לא נתמכת בדפדפן הזה';
-                    console.warn('SpeechRecognition not supported in this browser');
+                    console.warn('SpeechRecognition not supported');
                 }
+            }
+
+            resetSilenceTimer() {
+                if (this.silenceTimer) {
+                    clearTimeout(this.silenceTimer);
+                }
+                
+                this.silenceTimer = setTimeout(() => {
+                    if (this.isRecording && this.messageInput.value.trim()) {
+                        console.log('שתיקה זוהתה - שולח הודעה');
+                        this.sendMessage();
+                        this.stopRecording();
+                    }
+                }, 2000); // 2 שניות שתיקה
             }
 
             toggleRecording() {
@@ -404,20 +446,21 @@
                 if (!this.speechRecognition || this.isRecording) return;
 
                 this.isRecording = true;
-                this.audioAllowed = true; // מאפשר שמע לבוט אחרי הקלטה
                 this.voiceButton.classList.add('recording');
                 this.voiceButton.textContent = '🔴';
                 this.voiceButton.title = 'לחץ להפסקת הקלטה';
                 
                 this.messageInput.value = '';
+                this.currentTranscript = '';
                 this.messageInput.focus();
                 
                 try {
                     this.speechRecognition.start();
+                    this.resetSilenceTimer();
+                    console.log('הקלטה התחילה');
                 } catch (error) {
                     console.error('שגיאה בהתחלת הקלטה:', error);
                     this.stopRecording();
-                    alert('אחי, יש בעיה עם ההקלטה – תבדוק את המיקרופון!');
                 }
             }
 
@@ -429,6 +472,11 @@
                 this.voiceButton.textContent = '🎤';
                 this.voiceButton.title = 'לחץ להתחלת הקלטה';
                 
+                if (this.silenceTimer) {
+                    clearTimeout(this.silenceTimer);
+                    this.silenceTimer = null;
+                }
+                
                 if (this.speechRecognition) {
                     try {
                         this.speechRecognition.stop();
@@ -436,6 +484,8 @@
                         console.error('שגיאה בעצירת הקלטה:', error);
                     }
                 }
+                
+                console.log('הקלטה נעצרה');
             }
 
             toggleMute() {
@@ -443,18 +493,30 @@
                 this.muteButton.textContent = this.isMuted ? '🔇' : '🔊';
                 this.muteButton.title = this.isMuted ? 'הפעל קול' : 'השתק קול';
                 this.muteButton.classList.toggle('muted', this.isMuted);
-                if (!this.isMuted && this.audioAllowed) this.audioPlayer.play();
+                
+                if (this.isMuted && !this.audioPlayer.paused) {
+                    this.audioPlayer.pause();
+                }
+                
+                console.log(this.isMuted ? '🔇 קול מושתק' : '🔊 קול מופעל');
             }
 
-            playAudio(audioUrl) {
-                if (!this.audioAllowed || this.isMuted) return;
-                this.audioPlayer.src = audioUrl;
-                this.audioPlayer.play().catch(err => {
-                    console.error('שגיאה בניגון:', err);
-                    if (err.name === 'NotAllowedError') {
-                        alert('אחי, תלחץ על המיקרופון קודם כדי לאפשר שמע!');
+            async playAudio(audioUrl) {
+                if (this.isMuted) {
+                    console.log('🔇 קול מושתק - לא מנגן');
+                    return;
+                }
+                
+                try {
+                    this.audioPlayer.src = audioUrl;
+                    await this.audioPlayer.play();
+                    console.log('🔊 מנגן אודיו:', audioUrl);
+                } catch (error) {
+                    console.error('שגיאה בניגון אודיו:', error);
+                    if (error.name === 'NotAllowedError') {
+                        console.log('נדרש לחצן מיקרופון לאישור שמע');
                     }
-                });
+                }
             }
 
             addMessage(role, text, isPending = false, audioUrl = null) {
@@ -480,7 +542,10 @@
                 this.chatMessages.appendChild(messageDiv);
                 this.scrollToBottom();
                 
-                if (audioUrl) this.playAudio(audioUrl);
+                // נגן אודיו אם זו הודעת בוט עם קול
+                if (role === 'bot' && audioUrl && !isPending) {
+                    setTimeout(() => this.playAudio(audioUrl), 200);
+                }
                 
                 setTimeout(() => this.messageInput.focus(), 50);
                 return messageDiv;
@@ -538,6 +603,7 @@
                 }
                 this.hideTypingIndicator();
                 this.isProcessing = false;
+                console.log('בקשה נוכחית בוטלה');
             }
 
             scheduleProcessing() {
@@ -559,30 +625,41 @@
                 this.pendingMessages = [];
 
                 try {
-                    const controller = new AbortController();
-                    this.currentRequest = controller;
-
+                    console.log('שולח להודעה לשרת:', combinedMessage);
+                    
                     const response = await fetch('/api/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: combinedMessage, threadId: this.threadId })
+                        body: JSON.stringify({ 
+                            message: combinedMessage, 
+                            threadId: this.threadId 
+                        })
                     });
+
+                    console.log('תגובת שרת - Status:', response.status);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Server error ${response.status}: ${errorText}`);
+                    }
 
                     const data = await response.json();
                     this.hideTypingIndicator();
 
-                    if (response.ok) {
-                        this.threadId = data.threadId;
-                        const botReply = data.reply || 'לא התקבלה תשובה 😕';
-                        const audioUrl = data.audioUrl || null;
-                        this.addMessage('bot', botReply, false, audioUrl);
-                    } else {
-                        this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
-                    }
+                    this.threadId = data.threadId;
+                    const botReply = data.reply || 'לא התקבלה תשובה 😕';
+                    const audioUrl = data.audioUrl;
+                    
+                    console.log('תגובת בוט:', botReply);
+                    console.log('URL אודיו:', audioUrl);
+                    
+                    this.addMessage('bot', botReply, false, audioUrl);
+
                 } catch (error) {
-                    if (error.name === 'AbortError') return;
+                    console.error('שגיאה בעיבוד הודעות:', error);
                     this.hideTypingIndicator();
-                    this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
+                    if (error.name === 'AbortError') return;
+                    this.addMessage('bot', `שגיאה בחיבור לשרת: ${error.message} 😵`);
                 } finally {
                     this.isProcessing = false;
                     this.currentRequest = null;
@@ -591,15 +668,50 @@
             }
 
             async startConversation() {
-                const welcomeMessage = 'ברוכים הבאים! 🤖 לחץ על המיקרופון כדי להתחיל עם קול.';
+                const welcomeMessage = 'שלום! אני יואב - מפצח התנגדויות. בוא נתחיל!';
                 this.addMessage('bot', welcomeMessage);
+                
+                // שלח הודעת פתיחה לשרת
+                setTimeout(async () => {
+                    try {
+                        this.isProcessing = true;
+                        this.showTypingIndicator();
+                        
+                        const response = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                message: 'התחל שיחה',
+                                threadId: this.threadId 
+                            })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.threadId = data.threadId;
+                            
+                            this.hideTypingIndicator();
+                            this.addMessage('bot', data.reply, false, data.audioUrl);
+                        } else {
+                            throw new Error('Failed to start conversation');
+                        }
+                    } catch (error) {
+                        console.error('שגיאה בהתחלת שיחה:', error);
+                        this.hideTypingIndicator();
+                        this.addMessage('bot', 'שגיאה בהתחברות לשרת');
+                    } finally {
+                        this.isProcessing = false;
+                    }
+                }, 1000);
             }
 
             sendMessage() {
                 const text = this.messageInput.value.trim();
                 if (!text) return;
 
-                const messageElement = this.addMessage('user', text, true);
+                console.log('שולח הודעה:', text);
+                
+                this.addMessage('user', text, true);
                 this.pendingMessages.push(text);
                 
                 this.messageInput.value = '';
@@ -610,7 +722,8 @@
             }
 
             updateUI() {
-                this.sendButton.style.background = this.messageInput.value.trim() ? 'linear-gradient(135deg, #4CAF50, #45a049)' : '#ccc';
+                this.sendButton.style.background = this.messageInput.value.trim() ? 
+                    'linear-gradient(135deg, #4CAF50, #45a049)' : '#ccc';
             }
         }
 
