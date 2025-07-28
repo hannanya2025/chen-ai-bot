@@ -582,12 +582,8 @@
 
             scheduleProcessing() {
                 if (this.processTimeout) clearTimeout(this.processTimeout);
-                if (this.pendingMessages.length > 0 && !this.isProcessing) {
+                if (!this.isProcessing && this.pendingMessages.length > 0) {
                     this.processPendingMessages();
-                } else {
-                    this.processTimeout = setTimeout(() => {
-                        if (this.pendingMessages.length > 0) this.processPendingMessages();
-                    }, 500); // זמן קצר יותר לבדיקה
                 }
             }
 
