@@ -362,7 +362,418 @@
     </div>
 
     <script>
-        // הקוד ה-JS יתעדכן בהמשך
+        class ChatApp {
+            constructor() {
+                this.threadId = null;
+                this.currentRequest = null;
+                this.pendingMessages = [];
+                this.isProcessing = false;
+                this.processTimeout = null;
+                
+                // יכולות קוליות
+                this.isRecording = false;
+                this.speechRecognition = null;
+                this.audioPlayer = document.getElementById('audioPlayer');
+                this.isMuted = false;
+                
+                this.initElements();
+                this.bindEvents();
+                this.initVoiceCapabilities();
+                this.startConversation();
+            }
+
+            initElements() {
+                this.chatMessages = document.getElementById('chatMessages');
+                this.messageInput = document.getElementById('messageInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.voiceButton = document.getElementById('voiceButton');
+                this.muteButton = document.getElementById('muteButton');
+                
+                this.messageInput.focus();
+            }
+
+            bindEvents() {
+                this.sendButton.addEventListener('click', () => this.sendMessage());
+                
+                this.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                this.messageInput.addEventListener('input', () => {
+                    this.updateUI();
+                    
+                    if (this.isProcessing && this.messageInput.value.length === 1) {
+                        this.cancelCurrentRequest();
+                    }
+                });
+
+                this.voiceButton.addEventListener('click', () => this.toggleRecording());
+                this.muteButton.addEventListener('click', () => this.toggleMute());
+            }
+
+            async initVoiceCapabilities() {
+                try {
+                    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                        this.speechRecognition = new SpeechRecognition();
+                        this.speechRecognition.lang = 'he-IL';
+                        this.speechRecognition.continuous = true;
+                        this.speechRecognition.interimResults = true;
+
+                        this.speechRecognition.onresult = (event) => {
+                            let finalTranscript = '';
+                            let interimTranscript = '';
+
+                            for (let i = event.resultIndex; i < event.results.length; i++) {
+                                const transcript = event.results[i][0].transcript;
+                                if (event.results[i].isFinal) {
+                                    finalTranscript += transcript;
+                                } else {
+                                    interimTranscript += transcript;
+                                }
+                            }
+
+                            this.messageInput.value = finalTranscript + interimTranscript;
+                            this.updateUI();
+                        };
+
+                        this.speechRecognition.onend = () => {
+                            if (this.isRecording && this.messageInput.value.trim()) {
+                                this.sendMessage();
+                            }
+                            this.stopRecording();
+                        };
+
+                        this.speechRecognition.onerror = (event) => {
+                            console.error('שגיאה בזיהוי קול:', event.error);
+                            this.stopRecording();
+                        };
+                    }
+                } catch (error) {
+                    console.error('שגיאה באתחול יכולות קוליות:', error);
+                }
+            }
+
+            toggleRecording() {
+                if (this.isRecording) {
+                    this.stopRecording();
+                } else {
+                    this.startRecording();
+                }
+            }
+
+            startRecording() {
+                if (!this.speechRecognition || this.isRecording) return;
+
+                this.isRecording = true;
+                this.voiceButton.classList.add('recording');
+                this.voiceButton.textContent = '🔴';
+                this.voiceButton.title = 'לחץ להפסקת הקלטה';
+                
+                this.messageInput.value = '';
+                this.messageInput.focus();
+                
+                try {
+                    this.speechRecognition.start();
+                } catch (error) {
+                    console.error('שגיאה בהתחלת הקלטה:', error);
+                    this.stopRecording();
+                }
+            }
+
+            stopRecording() {
+                if (!this.isRecording) return;
+
+                this.isRecording = false;
+                this.voiceButton.classList.remove('recording');
+                this.voiceButton.textContent = '🎤';
+                this.voiceButton.title = 'לחץ להתחלת הקלטה';
+                
+                if (this.speechRecognition) {
+                    try {
+                        this.speechRecognition.stop();
+                    } catch (error) {
+                        console.error('שגיאה בעצירת הקלטה:', error);
+                    }
+                }
+            }
+
+            toggleMute() {
+                this.isMuted = !this.isMuted;
+                
+                if (this.isMuted) {
+                    this.muteButton.textContent = '🔇';
+                    this.muteButton.title = 'הפעל קול';
+                    this.muteButton.classList.add('muted');
+                    this.audioPlayer.pause();
+                } else {
+                    this.muteButton.textContent = '🔊';
+                    this.muteButton.title = 'השתק קול';
+                    this.muteButton.classList.remove('muted');
+                    if (this.audioPlayer.src) this.audioPlayer.play();
+                }
+                
+                console.log(this.isMuted ? '🔇 קול מושתק' : '🔊 קול מופעל');
+            }
+
+            playAudio(audioUrl) {
+                if (this.isMuted) return;
+                this.audioPlayer.src = audioUrl;
+                this.audioPlayer.play().catch(err => console.error('שגיאה בניגון שמע:', err));
+            }
+
+            addMessage(role, text, isPending = false, audioUrl = null) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${role}-message ${isPending ? 'pending-message' : ''}`;
+                
+                const avatar = document.createElement('div');
+                avatar.className = `avatar ${role}-avatar`;
+                avatar.textContent = role === 'user' ? '👤' : '🤖';
+                
+                const bubble = document.createElement('div');
+                bubble.className = 'message-bubble';
+                bubble.textContent = text;
+                
+                if (role === 'user') {
+                    messageDiv.appendChild(bubble);
+                    messageDiv.appendChild(avatar);
+                } else {
+                    messageDiv.appendChild(avatar);
+                    messageDiv.appendChild(bubble);
+                    if (audioUrl) {
+                        const audioBtn = document.createElement('button');
+                        audioBtn.textContent = '🎧 נגן קול';
+                        audioBtn.onclick = () => this.playAudio(audioUrl);
+                        messageDiv.appendChild(audioBtn);
+                    }
+                }
+                
+                this.chatMessages.appendChild(messageDiv);
+                this.scrollToBottom();
+                
+                setTimeout(() => {
+                    this.messageInput.focus();
+                }, 50);
+                
+                return messageDiv;
+            }
+
+            updateMessageStatus(messageElement, isPending) {
+                if (isPending) {
+                    messageElement.classList.add('pending-message');
+                } else {
+                    messageElement.classList.remove('pending-message');
+                }
+            }
+
+            showTypingIndicator() {
+                this.hideTypingIndicator();
+                
+                const typingDiv = document.createElement('div');
+                typingDiv.className = 'typing-indicator show';
+                typingDiv.id = 'typingIndicator';
+                
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar bot-avatar';
+                avatar.textContent = '🤖';
+                
+                const dotsDiv = document.createElement('div');
+                dotsDiv.className = 'typing-dots';
+                dotsDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+                
+                typingDiv.appendChild(avatar);
+                typingDiv.appendChild(dotsDiv);
+                
+                this.chatMessages.appendChild(typingDiv);
+                this.scrollToBottom();
+            }
+
+            hideTypingIndicator() {
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (typingIndicator) {
+                    typingIndicator.remove();
+                }
+            }
+
+            scrollToBottom() {
+                setTimeout(() => {
+                    this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+                }, 100);
+            }
+
+            cancelCurrentRequest() {
+                if (this.currentRequest) {
+                    this.currentRequest.abort();
+                    this.currentRequest = null;
+                }
+                
+                if (this.processTimeout) {
+                    clearTimeout(this.processTimeout);
+                    this.processTimeout = null;
+                }
+                
+                this.hideTypingIndicator();
+                this.isProcessing = false;
+                
+                console.log('בקשה נוכחית בוטלה');
+            }
+
+            scheduleProcessing() {
+                if (this.processTimeout) {
+                    clearTimeout(this.processTimeout);
+                }
+                
+                this.processTimeout = setTimeout(() => {
+                    if (this.pendingMessages.length > 0) {
+                        this.processPendingMessages();
+                    }
+                }, 1500);
+            }
+
+            async processPendingMessages() {
+                if (this.isProcessing || this.pendingMessages.length === 0) {
+                    return;
+                }
+
+                this.isProcessing = true;
+                this.showTypingIndicator();
+
+                const combinedMessage = this.pendingMessages.join('\n\n');
+                
+                const messageElements = this.chatMessages.querySelectorAll('.pending-message');
+                messageElements.forEach(el => this.updateMessageStatus(el, false));
+
+                this.pendingMessages = [];
+
+                try {
+                    const controller = new AbortController();
+                    this.currentRequest = controller;
+
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            message: combinedMessage,
+                            threadId: this.threadId
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    this.hideTypingIndicator();
+                    
+                    if (response.ok) {
+                        this.threadId = data.threadId;
+                        const botReply = data.reply || 'לא התקבלה תשובה 😕';
+                        const audioUrl = data.audioUrl || null;
+                        const messageElement = this.addMessage('bot', botReply, false, audioUrl);
+                        
+                        if (audioUrl) {
+                            this.playAudio(audioUrl);
+                        }
+                    } else {
+                        this.addMessage('bot', data.error || 'שגיאה בשליחה לשרת 😵');
+                    }
+                    
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        console.log('בקשה בוטלה בהצלחה');
+                        return;
+                    }
+                    
+                    this.hideTypingIndicator();
+                    this.addMessage('bot', 'שגיאה בחיבור לשרת 😵');
+                    console.error('Error:', error);
+                } finally {
+                    this.isProcessing = false;
+                    this.currentRequest = null;
+                    setTimeout(() => {
+                        this.messageInput.focus();
+                    }, 100);
+                }
+            }
+
+            async startConversation() {
+                const welcomeMessage = 'ברוכים הבאים! 🤖';
+                this.addMessage('bot', welcomeMessage);
+                
+                setTimeout(() => {
+                    this.isProcessing = true;
+                    this.showTypingIndicator();
+                    
+                    setTimeout(async () => {
+                        try {
+                            const controller = new AbortController();
+                            this.currentRequest = controller;
+
+                            const response = await fetch('/api/chat', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ 
+                                    message: 'התחל שיחה'
+                                })
+                            });
+
+                            const data = await response.json();
+                            this.threadId = data.threadId;
+                            
+                            this.hideTypingIndicator();
+                            const botReply = data.reply;
+                            const audioUrl = data.audioUrl || null;
+                            this.addMessage('bot', botReply, false, audioUrl);
+                            
+                            if (audioUrl) {
+                                this.playAudio(audioUrl);
+                            }
+                        } catch (error) {
+                            if (error.name !== 'AbortError') {
+                                this.hideTypingIndicator();
+                                this.addMessage('bot', 'שגיאה בהתחברות לשרת');
+                                console.error('שגיאה:', error);
+                            }
+                        } finally {
+                            this.isProcessing = false;
+                            this.currentRequest = null;
+                            setTimeout(() => {
+                                this.messageInput.focus();
+                            }, 100);
+                        }
+                    }, 300);
+                }, 2000);
+            }
+
+            sendMessage() {
+                const text = this.messageInput.value.trim();
+                if (!text) return;
+
+                const messageElement = this.addMessage('user', text, true);
+                this.pendingMessages.push(text);
+                
+                this.messageInput.value = '';
+                this.updateUI();
+
+                if (this.isProcessing) {
+                    this.cancelCurrentRequest();
+                }
+
+                this.scheduleProcessing();
+            }
+
+            updateUI() {
+                if (this.messageInput.value.trim()) {
+                    this.sendButton.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
+                } else {
+                    this.sendButton.style.background = '#ccc';
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            new ChatApp();
+        });
     </script>
 </body>
 </html>
