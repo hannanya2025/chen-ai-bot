@@ -1,4 +1,18 @@
-<!DOCTYPE html>
+.message.pending .message-bubble {
+            opacity: 0.7;
+            border: 2px dashed #ccc;
+        }
+
+        .message.pending .message-bubble::after {
+            content: " ●●●";
+            animation: blink 1s infinite;
+            color: #666;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
@@ -263,6 +277,8 @@
                 this.speechRecognition = null;
                 this.silenceTimer = null;
                 this.currentTranscript = '';
+                this.messageQueue = [];
+                this.queueTimer = null;
 
                 this.initElements();
                 this.bindEvents();
@@ -446,9 +462,10 @@
                 console.log('הקלטה נעצרה');
             }
 
-            addMessage(role, text) {
+            addMessage(role, text, isPending = false) {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${role}-message`;
+                if (isPending) messageDiv.classList.add('pending');
                 
                 const avatar = document.createElement('div');
                 avatar.className = `avatar ${role}-avatar`;
@@ -506,22 +523,53 @@
                 }, 100);
             }
 
-            async sendMessage() {
+            sendMessage() {
                 const text = this.messageInput.value.trim();
-                if (!text || this.isProcessing) return;
+                if (!text) return;
 
-                console.log('שולח הודעה:', text);
+                console.log('מוסיף הודעה לתור:', text);
                 
-                // מציג את הודעת המשתמש
-                this.addMessage('user', text);
+                // מציג את ההודעה עם סטטוס "ממתין"
+                this.addMessage('user', text, true);
                 
-                // מנקה את השדה ומעדכן הכפתור
+                // מוסיף לתור
+                this.messageQueue.push(text);
+                
+                // מנקה את השדה
                 this.messageInput.value = '';
                 this.currentTranscript = '';
                 this.updateButtonMode();
                 
-                // מסמן שהמערכת עסוקה
+                // מתחיל טיימר לאיחוד הודעות (300ms)
+                this.startQueueTimer();
+            }
+
+            startQueueTimer() {
+                // מבטל טיימר קיים
+                if (this.queueTimer) {
+                    clearTimeout(this.queueTimer);
+                }
+                
+                // מתחיל טיימר חדש
+                this.queueTimer = setTimeout(() => {
+                    this.processQueue();
+                }, 300);
+            }
+
+            async processQueue() {
+                if (this.isProcessing || this.messageQueue.length === 0) return;
+
                 this.isProcessing = true;
+                console.log('מעבד תור הודעות:', [...this.messageQueue]);
+
+                // מסמן את כל ההודעות הממתינות כ"נשלחו"
+                const pendingMessages = this.chatMessages.querySelectorAll('.pending');
+                pendingMessages.forEach(msg => msg.classList.remove('pending'));
+
+                // מאחד את כל ההודעות לאחת
+                const combinedMessage = this.messageQueue.join('\n\n');
+                this.messageQueue = []; // מרוקן את התור
+
                 this.showTypingIndicator();
 
                 try {
@@ -529,7 +577,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
-                            message: text, 
+                            message: combinedMessage, 
                             threadId: this.threadId
                         })
                     });
@@ -548,11 +596,18 @@
                     this.addMessage('bot', botReply);
 
                 } catch (error) {
-                    console.error('שגיאה בשליחת הודעה:', error);
+                    console.error('שגיאה בעיבוד התור:', error);
                     this.hideTypingIndicator();
                     this.addMessage('bot', `שגיאה בחיבור לשרת: ${error.message} 😵`);
                 } finally {
                     this.isProcessing = false;
+                    
+                    // אם הצטברו הודעות חדשות בזמן העיבוד
+                    if (this.messageQueue.length > 0) {
+                        console.log('הודעות חדשות בתור, ממשיך עיבוד');
+                        this.startQueueTimer();
+                    }
+                    
                     setTimeout(() => this.messageInput.focus(), 100);
                 }
             }
