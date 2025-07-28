@@ -355,7 +355,7 @@
                 this.messageInput.addEventListener('input', () => {
                     this.updateButtonMode();
                     
-                    if (this.isProcessing && this.messageInput.value.length === 1) {
+                    if (this.isProcessing && this.messageInput.value.trim().length > 0) {
                         this.cancelCurrentRequest();
                     }
                 });
@@ -577,7 +577,8 @@
                 }
                 this.hideTypingIndicator();
                 this.isProcessing = false;
-                console.log('בקשה נוכחית בוטלה');
+                this.pendingMessages = []; // מאפס את התור כשמבטלים
+                console.log('בקשה נוכחית בוטלה והתור נוקה');
             }
 
             scheduleProcessing() {
@@ -594,12 +595,11 @@
                 this.showTypingIndicator();
 
                 const messageId = `${Date.now()}-${this.duplicateCounter++}`;
-                console.log(`עיבוד הודעות [${messageId}]:`, this.pendingMessages);
+                console.log(`עיבוד הודעות [${messageId}]:`, [...this.pendingMessages]); // דיבאג מלא
 
                 const combinedMessage = this.pendingMessages.join('\n\n');
                 const messageElements = this.chatMessages.querySelectorAll('.pending-message');
                 messageElements.forEach(el => this.updateMessageStatus(el, false));
-                this.pendingMessages = [];
 
                 try {
                     const response = await fetch('/api/chat', {
@@ -623,11 +623,13 @@
                     
                     console.log(`תגובה [${messageId}]:`, botReply);
                     this.addMessage('bot', botReply);
+                    this.pendingMessages = []; // מרוקן את התור רק אחרי הצלחה
 
                 } catch (error) {
                     console.error('שגיאה בעיבוד הודעות:', error);
                     this.hideTypingIndicator();
                     this.addMessage('bot', `שגיאה בחיבור לשרת: ${error.message} 😵`);
+                    this.pendingMessages = []; // מרוקן גם במקרה של שגיאה
                 } finally {
                     this.isProcessing = false;
                     setTimeout(() => this.messageInput.focus(), 100);
