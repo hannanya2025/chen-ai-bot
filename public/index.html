@@ -381,7 +381,14 @@
                     this.speechRecognition.onerror = (event) => {
                         console.error('שגיאה בזיהוי קול:', event.error);
                         this.stopRecording();
+                        if (event.error === 'not-allowed') {
+                            alert('אחי, תוודא שהרשית גישה למיקרופון בהגדרות הדפדפן!');
+                        }
                     };
+                } else {
+                    this.voiceButton.disabled = true;
+                    this.voiceButton.title = 'הקלטה לא נתמכת בדפדפן הזה';
+                    console.warn('SpeechRecognition not supported in this browser');
                 }
             }
 
@@ -410,6 +417,7 @@
                 } catch (error) {
                     console.error('שגיאה בהתחלת הקלטה:', error);
                     this.stopRecording();
+                    alert('אחי, יש בעיה עם ההקלטה – תבדוק את המיקרופון!');
                 }
             }
 
@@ -441,7 +449,12 @@
             playAudio(audioUrl) {
                 if (!this.audioAllowed || this.isMuted) return;
                 this.audioPlayer.src = audioUrl;
-                this.audioPlayer.play().catch(err => console.error('שגיאה בניגון:', err));
+                this.audioPlayer.play().catch(err => {
+                    console.error('שגיאה בניגון:', err);
+                    if (err.name === 'NotAllowedError') {
+                        alert('אחי, תלחץ על המיקרופון קודם כדי לאפשר שמע!');
+                    }
+                });
             }
 
             addMessage(role, text, isPending = false, audioUrl = null) {
