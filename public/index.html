@@ -281,6 +281,7 @@
                 this.currentTranscript = '';
                 this.messageQueue = [];
                 this.queueTimer = null;
+                this.accumulationTimer = null; // טיימר לצבירת הודעות נוספות
 
                 this.initElements();
                 this.bindEvents();
@@ -547,19 +548,31 @@
             }
 
             startQueueTimer() {
-                // מבטל טיימר קיים
+                // מבטל טיימרים קיימים
                 if (this.queueTimer) {
                     clearTimeout(this.queueTimer);
                 }
+                if (this.accumulationTimer) {
+                    clearTimeout(this.accumulationTimer);
+                }
                 
-                // מתחיל טיימר חדש
+                // אם כבר בעיבוד, מחכה לצבירה ארוכה יותר
+                const delay = this.isProcessing ? 1500 : 500;
+                
                 this.queueTimer = setTimeout(() => {
                     this.processQueue();
-                }, 300);
+                }, delay);
             }
 
             async processQueue() {
-                if (this.isProcessing || this.messageQueue.length === 0) return;
+                if (this.messageQueue.length === 0) return;
+                
+                // אם כבר בעיבוד, מחכה לסיום ואז מתחיל מחדש
+                if (this.isProcessing) {
+                    console.log('כבר בעיבוד - מחכה לסיום ואז יעבד את התור');
+                    this.startQueueTimer(); // יתחיל מחדש עם דיליי ארוך יותר
+                    return;
+                }
 
                 this.isProcessing = true;
                 console.log('מעבד תור הודעות:', [...this.messageQueue]);
@@ -570,6 +583,7 @@
 
                 // מאחד את כל ההודעות לאחת
                 const combinedMessage = this.messageQueue.join('\n\n');
+                const messageCount = this.messageQueue.length;
                 this.messageQueue = []; // מרוקן את התור
 
                 this.showTypingIndicator();
@@ -580,7 +594,8 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                             message: combinedMessage, 
-                            threadId: this.threadId
+                            threadId: this.threadId,
+                            messageCount: messageCount // נותן לשרת לדעת כמה הודעות אוחדו
                         })
                     });
 
@@ -594,7 +609,7 @@
                     this.threadId = data.threadId;
                     const botReply = data.reply || 'לא התקבלה תשובה 😕';
                     
-                    console.log('תגובה מהבוט:', botReply);
+                    console.log(`תגובה מהבוט (על ${messageCount} הודעות):`, botReply);
                     this.addMessage('bot', botReply);
 
                 } catch (error) {
@@ -604,10 +619,10 @@
                 } finally {
                     this.isProcessing = false;
                     
-                    // אם הצטברו הודעות חדשות בזמן העיבוד
+                    // בודק אם יש הודעות חדשות שהצטברו
                     if (this.messageQueue.length > 0) {
                         console.log('הודעות חדשות בתור, ממשיך עיבוד');
-                        this.startQueueTimer();
+                        setTimeout(() => this.startQueueTimer(), 100);
                     }
                     
                     setTimeout(() => this.messageInput.focus(), 100);
