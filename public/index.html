@@ -817,73 +817,76 @@
                     const setVoiceAndSpeak = () => {
                         const voices = this.speechSynthesis.getVoices();
                         
-                        // DEBUG - בוא נראה מה יש
                         console.log('כל הקולות הזמינים:', voices.map(v => `${v.name} (${v.lang})`));
                         
-                        // מחפש קול עברי גברי - לפי סדר עדיפות
                         let selectedVoice = null;
                         
-                        // 1. קול עברי מלא
-                        selectedVoice = voices.find(v => v.lang === 'he-IL');
+                        // 1. מחפש קול עברי (כל מין שהוא)
+                        selectedVoice = voices.find(v => v.lang === 'he-IL' || v.lang.includes('he'));
                         if (selectedVoice) {
                             utterance.lang = 'he-IL';
-                            utterance.pitch = selectedVoice.name.toLowerCase().includes('female') ? 0.8 : 0.8;
+                            utterance.pitch = 0.8; // נמוך יותר לגבר
                             console.log('✅ נמצא קול עברי:', selectedVoice.name);
                         }
                         
-                        // 2. אם אין עברי - נחפש קול גברי באנגלית
+                        // 2. אם אין עברי - קול גברי באנגלית עם הטקסט העברי כמו שהוא
                         if (!selectedVoice) {
+                            // מחפש קול גברי מפורש
                             const maleVoices = voices.filter(v => 
-                                v.lang.startsWith('en') &&
-                                (v.name.toLowerCase().includes('male') || 
-                                 v.name.toLowerCase().includes('david') ||
-                                 v.name.toLowerCase().includes('mark') ||
-                                 v.name.toLowerCase().includes('microsoft') &&
-                                 !v.name.toLowerCase().includes('female') &&
-                                 !v.name.toLowerCase().includes('zira'))
+                                v.lang.startsWith('en') && (
+                                    v.name.toLowerCase().includes('male') || 
+                                    v.name.toLowerCase().includes('david') ||
+                                    v.name.toLowerCase().includes('mark') ||
+                                    v.name.toLowerCase().includes('ryan') ||
+                                    (v.name.toLowerCase().includes('microsoft') && 
+                                     !v.name.toLowerCase().includes('zira') &&
+                                     !v.name.toLowerCase().includes('cortana'))
+                                )
                             );
                             
-                            selectedVoice = maleVoices[0] || voices.find(v => 
-                                v.lang.startsWith('en') && !v.name.toLowerCase().includes('female')
-                            );
+                            selectedVoice = maleVoices[0];
+                            
+                            // אם אין גברי מפורש, קח כל קול באנגלית שלא נשי
+                            if (!selectedVoice) {
+                                selectedVoice = voices.find(v => 
+                                    v.lang.startsWith('en') && 
+                                    !v.name.toLowerCase().includes('female') &&
+                                    !v.name.toLowerCase().includes('zira') &&
+                                    !v.name.toLowerCase().includes('cortana') &&
+                                    !v.name.toLowerCase().includes('helen')
+                                );
+                            }
                             
                             if (selectedVoice) {
                                 utterance.lang = 'en-US';
-                                utterance.pitch = 0.7; // קול עמוק יותר
+                                utterance.pitch = 0.7; // עמוק מאוד לגבר
                                 console.log('✅ נמצא קול גברי באנגלית:', selectedVoice.name);
-                                
-                                // אם אין עברי, ננסה לתרגם לטרנסליטרציה
-                                const transliteratedText = this.transliterateToEnglish(cleanText);
-                                utterance.text = transliteratedText;
-                                console.log('מתרגם לאנגלית:', transliteratedText);
+                                console.log('יקרא טקסט עברי בקול אנגלי - זה עדיין יותר טוב מקול נשי');
                             }
                         }
                         
-                        // 3. אם כלום לא עבד - קח את הראשון
+                        // 3. אם כלום לא עבד - קח את הראשון עם pitch נמוך
                         if (!selectedVoice && voices.length > 0) {
                             selectedVoice = voices[0];
-                            utterance.pitch = 0.8;
-                            console.log('לוקח קול ברירת מחדל:', selectedVoice.name);
+                            utterance.pitch = 0.6; // מאוד נמוך
+                            console.log('לוקח קול ברירת מחדל עם pitch נמוך:', selectedVoice.name);
                         }
                         
                         if (selectedVoice) {
                             utterance.voice = selectedVoice;
-                            console.log('🎤 נבחר קול:', selectedVoice.name, selectedVoice.lang);
+                            console.log('🎤 קול נבחר:', selectedVoice.name, 'שפה:', utterance.lang, 'pitch:', utterance.pitch);
                         } else {
                             console.log('❌ לא נמצא אף קול!');
                             return;
                         }
                         
-                        // ניסיון דיבור
-                        console.log('מנסה לדבר:', utterance.text?.substring(0, 50) + '...');
+                        console.log('מדבר:', cleanText.substring(0, 30) + '...');
                         this.speechSynthesis.speak(utterance);
                         
-                        // בדיקה אם באמת מדבר
+                        // בדיקה
                         setTimeout(() => {
                             if (!this.speechSynthesis.speaking) {
-                                console.log('❌ המערכת לא מדברת - נסה להורות חבילת שפה עברית במערכת ההפעלה');
-                            } else {
-                                console.log('✅ המערכת מדברת כרגע');
+                                console.log('💡 טיפ: הורד חבילת שפה עברית במערכת שלך לקול טוב יותר');
                             }
                         }, 500);
                     };
@@ -895,46 +898,6 @@
                         setVoiceAndSpeak();
                     }
                 }
-            }
-
-            // תרגום בסיסי לטרנסליטרציה אנגלית
-            transliterateToEnglish(hebrewText) {
-                const hebrewToEnglish = {
-                    'א': 'a', 'ב': 'b', 'ג': 'g', 'ד': 'd', 'ה': 'h', 'ו': 'v', 'ז': 'z',
-                    'ח': 'ch', 'ט': 't', 'י': 'y', 'כ': 'k', 'ך': 'k', 'ל': 'l', 'מ': 'm',
-                    'ם': 'm', 'ן': 'n', 'נ': 'n', 'ס': 's', 'ע': 'a', 'פ': 'p', 'ף': 'f',
-                    'צ': 'ts', 'ץ': 'ts', 'ק': 'k', 'ר': 'r', 'ש': 'sh', 'ת': 't'
-                };
-                
-                // מילים נפוצות לתרגום מלא
-                const commonWords = {
-                    'שלום': 'shalom',
-                    'אחי': 'achi',
-                    'גבר': 'gever',
-                    'נשמה': 'neshama',
-                    'יקר': 'yakar',
-                    'כסף': 'kesef',
-                    'זמן': 'zman',
-                    'טוב': 'tov',
-                    'רע': 'ra',
-                    'בסדר': 'beseder',
-                    'יאללה': 'yalla',
-                    'תקשיב': 'takshiv',
-                    'בואנה': 'boana'
-                };
-                
-                let result = hebrewText;
-                
-                // תחילה מחליף מילים שלמות
-                Object.keys(commonWords).forEach(hebrew => {
-                    const english = commonWords[hebrew];
-                    result = result.replace(new RegExp(hebrew, 'g'), english);
-                });
-                
-                // אז מחליף אותיות בודדות
-                result = result.split('').map(char => hebrewToEnglish[char] || char).join('');
-                
-                return result;
             }
         }
 
