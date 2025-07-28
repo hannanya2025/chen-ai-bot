@@ -578,7 +578,7 @@
                     });
 
                     if (!response.ok) {
-                        throw new Error(`Server error ${response.status}`);
+                        throw new Error(`Server error ${response.status}: ${await response.text()}`);
                     }
 
                     const data = await response.json();
@@ -631,7 +631,7 @@
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply);
                         } else {
-                            throw new Error('Failed to start conversation');
+                            throw new Error(`Failed to start conversation: ${await response.text()}`);
                         }
                     } catch (error) {
                         console.error('שגיאה בהתחלת שיחה:', error);
