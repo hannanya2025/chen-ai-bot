@@ -454,6 +454,7 @@
                 this.actionButton.textContent = '🔴';
                 this.actionButton.title = 'מקליט...';
                 
+                // מנקה את השדה לפני הקלטה חדשה
                 this.messageInput.value = '';
                 this.currentTranscript = '';
                 this.messageInput.placeholder = 'מקליט...';
@@ -678,7 +679,9 @@
                 this.addMessage('user', text, true);
                 this.pendingMessages.push(text);
                 
+                // מנקה את השדה מיד אחרי השליחה
                 this.messageInput.value = '';
+                this.currentTranscript = '';
                 this.updateButtonMode();
 
                 if (this.isProcessing) this.cancelCurrentRequest();
