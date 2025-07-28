@@ -530,9 +530,9 @@
                 const text = this.messageInput.value.trim();
                 if (!text) return;
 
-                console.log('🔥 הודעה חדשה - מבטל בקשות קיימות ומתחיל מחדש');
+                console.log('🔥 הודעה חדשה:', text);
                 
-                // מבטל בקשה קיימת אם יש כזו
+                // מבטל בקשה קיימת אם יש כזו (אבל לא מוחק את התור!)
                 if (this.currentAbortController) {
                     this.currentAbortController.abort();
                     console.log('❌ ביטול בקשה קיימת');
@@ -543,11 +543,17 @@
                     clearTimeout(this.queueTimer);
                 }
                 
+                // איפוס מצב עיבוד
+                this.isProcessing = false;
+                this.hideTypingIndicator();
+                
                 // מציג את ההודעה עם סטטוס "ממתין"
                 this.addMessage('user', text, true);
                 
-                // מוסיף לתור
+                // מוסיף לתור (התור לא מתרוקן!)
                 this.messageQueue.push(text);
+                
+                console.log('📋 תור עדכני:', [...this.messageQueue]);
                 
                 // מנקה את השדה
                 this.messageInput.value = '';
@@ -575,14 +581,17 @@
                 this.currentAbortController = new AbortController();
                 this.isProcessing = true;
 
+                // שומר עותק של התור לפני שמרוקן אותו
+                const messagesToProcess = [...this.messageQueue];
+                this.messageQueue = []; // מרוקן את התור רק אחרי שיצרנו עותק
+
                 // מסמן את כל ההודעות הממתינות כ"נשלחו"
                 const pendingMessages = this.chatMessages.querySelectorAll('.pending');
                 pendingMessages.forEach(msg => msg.classList.remove('pending'));
 
                 // מאחד את כל ההודעות לאחת
-                const combinedMessage = this.messageQueue.join('\n\n');
-                const messageCount = this.messageQueue.length;
-                this.messageQueue = []; // מרוקן את התור
+                const combinedMessage = messagesToProcess.join('\n\n');
+                const messageCount = messagesToProcess.length;
 
                 this.showTypingIndicator();
 
@@ -594,7 +603,7 @@
                             message: combinedMessage, 
                             threadId: this.threadId
                         }),
-                        signal: this.currentAbortController.signal // חשוב!
+                        signal: this.currentAbortController.signal
                     });
 
                     // בודק אם הבקשה בוטלה
@@ -609,7 +618,7 @@
 
                     const data = await response.json();
                     
-                    // בודק שוב אם בוטל (יכול להיות שהבקשה בוטלה בזמן parsing)
+                    // בודק שוב אם בוטל
                     if (this.currentAbortController.signal.aborted) {
                         console.log('🛑 הבקשה בוטלה אחרי קבלת תגובה');
                         return;
@@ -626,6 +635,9 @@
                     if (error.name === 'AbortError') {
                         console.log('🔄 בקשה בוטלה - זה בסדר, יש הודעה חדשה');
                         this.hideTypingIndicator();
+                        // החזרת ההודעות שלא עובדו לתור
+                        this.messageQueue = [...messagesToProcess, ...this.messageQueue];
+                        console.log('🔄 החזרתי הודעות לתור:', [...this.messageQueue]);
                         return;
                     }
                     
@@ -636,9 +648,9 @@
                     this.isProcessing = false;
                     this.currentAbortController = null;
                     
-                    // אם הצטברו הודעות חדשות, מתחיל מחדש
+                    // אם יש הודעות בתור, מתחיל מחדש
                     if (this.messageQueue.length > 0) {
-                        console.log('🔄 הודעות חדשות בתור, מתחיל מחדש:', [...this.messageQueue]);
+                        console.log('🔄 הודעות נותרו בתור, מתחיל מחדש:', [...this.messageQueue]);
                         this.startQueueTimer();
                     }
                     
