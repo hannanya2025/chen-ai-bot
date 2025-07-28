@@ -229,7 +229,60 @@ async function generateSpeech(text) {
     }, 300000);
   }
 }
+// פונקציה ליצירת קובץ שמע דרך OpenAI TTS
+async function generateSpeech(text) {
+  const OPENAI_KEY = process.env.OPENAI_KEY;
+  if (!OPENAI_KEY) throw new Error('Missing OPENAI_KEY');
 
+  const fileName = `speech-${Date.now()}.mp3`;
+  const audioFilePath = path.join(__dirname, 'public', fileName);
+  
+  try {
+    console.log('🎙️ יוצר קובץ שמע עבור:', text.substring(0, 50) + '...');
+    
+    const response = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        voice: 'alloy', // מתאים לגבר בן 30
+        input: text,
+        response_format: 'mp3',
+        speed: 1.2 // מהירות כמו שביקשת
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`TTS API Error ${response.status}: ${errorText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
+    
+    console.log(`🎙️ קובץ שמע נוצר: ${audioFilePath}`);
+    
+    // מחזיר את הנתיב הנכון
+    const audioUrl = `/${fileName}`;
+    
+    // מחק את הקובץ אחרי 5 דקות
+    setTimeout(() => {
+      if (fs.existsSync(audioFilePath)) {
+        fs.unlinkSync(audioFilePath);
+        console.log(`🗑️ קובץ שמע נמחק: ${fileName}`);
+      }
+    }, 300000);
+    
+    return audioUrl;
+    
+  } catch (err) {
+    console.error('🎙️ שגיאה ביצירת שמע:', err.message);
+    throw err;
+  }
+}
 // פונקציה לעיבוד הודעות עם המתנה להקלדה
 async function processMessages(threadId) {
   if (processingThreads.has(threadId)) return;
