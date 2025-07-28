@@ -277,6 +277,7 @@
                 this.silenceTimer = null;
                 this.currentTranscript = '';
                 this.duplicateCounter = 0;
+                this.lastBotResponse = ''; // שמירת התגובה האחרונה של הבוט
 
                 this.initElements();
                 this.bindEvents();
@@ -573,7 +574,8 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                             message: combinedMessage, 
-                            threadId: this.threadId 
+                            threadId: this.threadId,
+                            context: this.lastBotResponse // שולח את התגובה האחרונה כקונטקסט
                         })
                     });
 
@@ -586,6 +588,7 @@
 
                     this.threadId = data.threadId;
                     const botReply = data.reply || 'לא התקבלה תשובה 😕';
+                    this.lastBotResponse = botReply; // מעדכן את התגובה האחרונה
                     
                     console.log(`תגובה [${messageId}]:`, botReply);
                     this.addMessage('bot', botReply);
@@ -630,6 +633,7 @@
                             
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply);
+                            this.lastBotResponse = data.reply; // שומר את התגובה הראשונית
                         } else {
                             throw new Error(`Failed to start conversation: ${await response.text()}`);
                         }
