@@ -641,9 +641,24 @@
                         this.isProcessing = true;
                         this.showTypingIndicator();
                         
-                        // הודעת הברכה מיואב
-                        this.hideTypingIndicator();
-                        this.addMessage('bot', 'שלום! אני יואב מפצח ההתנגדויות מ LEVEL UP. בואו נכיר - איך קוראים לך?');
+                        const response = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                message: 'התחל שיחה',
+                                threadId: this.threadId 
+                            })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.threadId = data.threadId;
+                            
+                            this.hideTypingIndicator();
+                            this.addMessage('bot', data.reply);
+                        } else {
+                            throw new Error('Failed to start conversation');
+                        }
                     } catch (error) {
                         console.error('שגיאה בהתחלת שיחה:', error);
                         this.hideTypingIndicator();
