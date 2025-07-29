@@ -311,6 +311,7 @@
                 this.isPlaying = false;
                 this.currentAudioStream = null;
                 this.hasUserInteracted = false;
+                this.useVocalization = true; // אפשרות להפעיל/לכבות ניקוד
 
                 this.initElements();
                 this.bindEvents();
@@ -375,7 +376,6 @@
                     this.hasUserInteracted = true;
                     this.toggleMute();
                     if (!this.isMuted) {
-                        // מבקש אישור דפדפן להפעלת צליל
                         this.speakText('דִּיבוּר מוּפעָל, אַחִי! נִסָּה אוֹתִי עַכְשָׁיו.');
                     }
                 });
@@ -597,10 +597,11 @@
                 
                 console.log('📋 תור עדכני:', [...this.messageQueue]);
                 
-                this.messageInput.value = '';
+                this.messageInput.value = ''; // איפוס השדה תמיד אחרי שליחה
                 this.currentTranscript = '';
                 this.updateButtonMode();
                 
+                this.stopRecording(); // עצירת הקלטה אם פעילה
                 this.startQueueTimer();
             }
 
@@ -753,37 +754,28 @@
             }
 
             addVocalization(text) {
-                // פונקציה פשוטה להוספת ניקוד בסיסי
+                // שיפור הניקוד: רק ניקוד ידני למילים ספציפיות, בלי ניקוד אוטומטי כללי
                 let vocalizedText = text;
-                // כללים בסיסיים לניקוד
-                vocalizedText = vocalizedText.replace(/שלום/g, 'שָׁלוֹם');
-                vocalizedText = vocalizedText.replace(/ברוכים/g, 'בְּרוּכִים');
-                vocalizedText = vocalizedText.replace(/הבאים/g, 'הַבָּאִים');
-                vocalizedText = vocalizedText.replace(/מה/g, 'מָה');
-                vocalizedText = vocalizedText.replace(/שלומך/g, 'שְׁלוֹמְךָ');
-                vocalizedText = vocalizedText.replace(/יום/g, 'יוֹם');
-                vocalizedText = vocalizedText.replace(/אתה/g, 'אַתָּה');
-                vocalizedText = vocalizedText.replace(/צריך/g, 'צָרִיךְ');
-                vocalizedText = vocalizedText.replace(/לפצח/g, 'לִפְצוֹחַ');
-                vocalizedText = vocalizedText.replace(/רוצה/g, 'רוֹצֶה');
-                vocalizedText = vocalizedText.replace(/סימולציה/g, 'סִימוּלָצְיָה');
-                vocalizedText = vocalizedText.replace(/תעלה/g, 'תַּעֲלֶה');
-                vocalizedText = vocalizedText.replace(/עסק/g, 'עֵסֶק');
-                vocalizedText = vocalizedText.replace(/רמה/g, 'רְמָה');
-                vocalizedText = vocalizedText.replace(/הבאה/g, 'הַבָּאָה');
-                vocalizedText = vocalizedText.replace(/אחי/g, 'אַחִי');
-                vocalizedText = vocalizedText.replace(/נסה/g, 'נִסָּה');
-                vocalizedText = vocalizedText.replace(/עכשיו/g, 'עַכְשָׁיו');
-
-                // הוספת ניקוד כללי למילים נפוצות נוספות
-                vocalizedText = vocalizedText.replace(/\b(\w+)/g, (match) => {
-                    if (!/[\u0591-\u05C7]/.test(match)) {
-                        // ניקוד דיפולטי פשוט אם אין ניקוד קיים
-                        return match + 'ָ'; // קמץ כברירת מחדל
-                    }
-                    return match;
-                });
-
+                if (this.useVocalization) {
+                    vocalizedText = vocalizedText.replace(/שלום/g, 'שָׁלוֹם');
+                    vocalizedText = vocalizedText.replace(/ברוכים/g, 'בְּרוּכִים');
+                    vocalizedText = vocalizedText.replace(/הבאים/g, 'הַבָּאִים');
+                    vocalizedText = vocalizedText.replace(/מה/g, 'מָה');
+                    vocalizedText = vocalizedText.replace(/שלומך/g, 'שְׁלוֹמְךָ');
+                    vocalizedText = vocalizedText.replace(/יום/g, 'יוֹם');
+                    vocalizedText = vocalizedText.replace(/אתה/g, 'אַתָּה');
+                    vocalizedText = vocalizedText.replace(/צריך/g, 'צָרִיךְ');
+                    vocalizedText = vocalizedText.replace(/לפצח/g, 'לִפְצוֹחַ');
+                    vocalizedText = vocalizedText.replace(/רוצה/g, 'רוֹצֶה');
+                    vocalizedText = vocalizedText.replace(/סימולציה/g, 'סִימוּלָצְיָה');
+                    vocalizedText = vocalizedText.replace(/תעלה/g, 'תַּעֲלֶה');
+                    vocalizedText = vocalizedText.replace(/עסק/g, 'עֵסֶק');
+                    vocalizedText = vocalizedText.replace(/רמה/g, 'רְמָה');
+                    vocalizedText = vocalizedText.replace(/הבאה/g, 'הַבָּאָה');
+                    vocalizedText = vocalizedText.replace(/אחי/g, 'אַחִי');
+                    vocalizedText = vocalizedText.replace(/נסה/g, 'נִסָּה');
+                    vocalizedText = vocalizedText.replace(/עכשיו/g, 'עַכְשָׁיו');
+                }
                 return vocalizedText;
             }
 
@@ -802,7 +794,7 @@
                     this.speechSynthesizer = new SpeechSDK.SpeechSynthesizer(this.speechConfig, audioConfig);
                     
                     const vocalizedText = this.addVocalization(text);
-                    console.log('🎙️ מתחיל דיבור עם ניקוד:', vocalizedText.substring(0, 50) + '...');
+                    console.log('🎙️ מתחיל דיבור:', vocalizedText.substring(0, 50) + '...');
                     
                     this.speechSynthesizer.speakTextAsync(
                         vocalizedText,
@@ -891,6 +883,13 @@
                         this.isProcessing = false;
                     }
                 }, 1000);
+            }
+
+            // פונקציה להפעלת/כיבוי ניקוד (ניתן להפעיל ידנית דרך הודעה)
+            toggleVocalization() {
+                this.useVocalization = !this.useVocalization;
+                this.addMessage('bot', `נִיקוּד ${this.useVocalization ? 'מופעל' : 'מושבת'}.`);
+                console.log(`ניקוד ${this.useVocalization ? 'מופעל' : 'מושבת'}`);
             }
         }
 
