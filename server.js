@@ -1,4 +1,4 @@
-import express from 'express';
+import express from 'express';  // ← השורה שחסרה!
 import cors from 'cors';
 import fetch from 'node-fetch';
 import path from 'path';
@@ -240,7 +240,6 @@ async function processMessages(threadId) {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-    // כעת לא יוצרים קובץ שמע כי Azure מטפל בזה בצד הלקוח
     const allClients = currentClients.splice(0);
     allClients.forEach(client => client?.resolve?.({ reply, threadId }));
 
@@ -304,7 +303,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const result = await scheduleProcessing(threadId, message);
-    const { reply } = await result; // הסרנו את audioUrl
+    const { reply } = await result;
     res.json({ reply, threadId });
 
   } catch (err) {
