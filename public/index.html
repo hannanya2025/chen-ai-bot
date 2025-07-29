@@ -310,7 +310,7 @@
                 this.speechConfig = null;
                 this.isPlaying = false;
                 this.currentAudioStream = null;
-                this.hasUserInteracted = false; // מעקב אחר אינטראקציה
+                this.hasUserInteracted = false;
 
                 this.initElements();
                 this.bindEvents();
@@ -325,15 +325,15 @@
                 this.actionButton = document.getElementById('actionButton');
                 this.muteButton = document.getElementById('muteButton');
                 
-                this.isMuted = localStorage.getItem('chatMuted') !== 'false'; // מתחיל כמושתק!
+                this.isMuted = localStorage.getItem('chatMuted') === 'true'; // מתחיל כמושתק אם שמור כן
                 this.updateMuteButton();
-                
                 this.messageInput.focus();
             }
 
             bindEvents() {
                 this.actionButton.addEventListener('mousedown', (e) => {
                     e.preventDefault();
+                    this.hasUserInteracted = true;
                     if (this.isInSendMode()) {
                         this.sendMessage();
                     } else {
@@ -350,6 +350,7 @@
 
                 this.actionButton.addEventListener('touchstart', (e) => {
                     e.preventDefault();
+                    this.hasUserInteracted = true;
                     if (this.isInSendMode()) {
                         this.sendMessage();
                     } else {
@@ -360,15 +361,18 @@
                 this.messageInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
+                        this.hasUserInteracted = true;
                         this.sendMessage();
                     }
                 });
 
                 this.messageInput.addEventListener('input', () => {
+                    this.hasUserInteracted = true;
                     this.updateButtonMode();
                 });
 
                 this.muteButton.addEventListener('click', () => {
+                    this.hasUserInteracted = true;
                     this.toggleMute();
                 });
             }
@@ -464,7 +468,6 @@
                 this.actionButton.textContent = '🔴';
                 this.actionButton.title = 'מקליט...';
                 
-                // מנקה את השדה לפני הקלטה חדשה
                 this.messageInput.value = '';
                 this.currentTranscript = '';
                 this.messageInput.placeholder = 'מקליט...';
@@ -568,40 +571,32 @@
                 const text = this.messageInput.value.trim();
                 if (!text) return;
 
-                // מסמן שהמשתמש בצע אינטראקציה
                 this.hasUserInteracted = true;
 
                 console.log('🔥 הודעה חדשה:', text);
                 
-                // מבטל בקשה קיימת אם יש כזו (אבל לא מוחק את התור!)
                 if (this.currentAbortController) {
                     this.currentAbortController.abort();
                     console.log('❌ ביטול בקשה קיימת');
                 }
                 
-                // מבטל טיימר קיים
                 if (this.queueTimer) {
                     clearTimeout(this.queueTimer);
                 }
                 
-                // איפוס מצב עיבוד
                 this.isProcessing = false;
                 this.hideTypingIndicator();
                 
-                // מציג את ההודעה עם סטטוס "ממתין"
                 this.addMessage('user', text, true);
                 
-                // מוסיף לתור (התור לא מתרוקן!)
                 this.messageQueue.push(text);
                 
                 console.log('📋 תור עדכני:', [...this.messageQueue]);
                 
-                // מנקה את השדה
                 this.messageInput.value = '';
                 this.currentTranscript = '';
                 this.updateButtonMode();
                 
-                // מתחיל טיימר חדש
                 this.startQueueTimer();
             }
 
@@ -618,19 +613,15 @@
 
                 console.log('🚀 מתחיל עיבוד תור עם', this.messageQueue.length, 'הודעות:', [...this.messageQueue]);
 
-                // יוצר AbortController חדש לבקשה הזו
                 this.currentAbortController = new AbortController();
                 this.isProcessing = true;
 
-                // שומר עותק של התור לפני שמרוקן אותו
                 const messagesToProcess = [...this.messageQueue];
-                this.messageQueue = []; // מרוקן את התור רק אחרי שיצרנו עותק
+                this.messageQueue = [];
 
-                // מסמן את כל ההודעות הממתינות כ"נשלחו"
                 const pendingMessages = this.chatMessages.querySelectorAll('.pending');
                 pendingMessages.forEach(msg => msg.classList.remove('pending'));
 
-                // מאחד את כל ההודעות לאחת
                 const combinedMessage = messagesToProcess.join('\n\n');
                 const messageCount = messagesToProcess.length;
 
@@ -647,7 +638,6 @@
                         signal: this.currentAbortController.signal
                     });
 
-                    // בודק אם הבקשה בוטלה
                     if (this.currentAbortController.signal.aborted) {
                         console.log('🛑 הבקשה בוטלה');
                         return;
@@ -659,7 +649,6 @@
 
                     const data = await response.json();
                     
-                    // בודק שוב אם בוטל
                     if (this.currentAbortController.signal.aborted) {
                         console.log('🛑 הבקשה בוטלה אחרי קבלת תגובה');
                         return;
@@ -672,7 +661,6 @@
                     console.log(`✅ תגובה מהבוט (על ${messageCount} הודעות מאוחדות):`, botReply);
                     this.addMessage('bot', botReply);
                     
-                    // יוצר דיבור רק אם המשתמש הפעיל אותו - חיסכון במשאבים!
                     if (!this.isMuted) {
                         setTimeout(() => this.speakText(botReply), 500);
                     } else {
@@ -683,7 +671,6 @@
                     if (error.name === 'AbortError') {
                         console.log('🔄 בקשה בוטלה - זה בסדר, יש הודעה חדשה');
                         this.hideTypingIndicator();
-                        // החזרת ההודעות שלא עובדו לתור
                         this.messageQueue = [...messagesToProcess, ...this.messageQueue];
                         console.log('🔄 החזרתי הודעות לתור:', [...this.messageQueue]);
                         return;
@@ -696,7 +683,6 @@
                     this.isProcessing = false;
                     this.currentAbortController = null;
                     
-                    // אם יש הודעות בתור, מתחיל מחדש
                     if (this.messageQueue.length > 0) {
                         console.log('🔄 הודעות נותרו בתור, מתחיל מחדש:', [...this.messageQueue]);
                         this.startQueueTimer();
@@ -717,13 +703,13 @@
                         '8JzJ0IqjGsT6OJT491zVkip4jrkzVU9w8IjiljTJjw0hpW8dOJqwJQQJ99BGACYeBjFXJ3w3AAAYACOGgd8B',
                         'eastus'
                     );
-                    
                     this.speechConfig.speechSynthesisVoiceName = 'he-IL-AvriNeural';
                     this.speechConfig.speechSynthesisOutputFormat = SpeechSDK.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3;
                     
                     console.log('🎙️ Azure Speech מוכן');
                 } catch (error) {
                     console.error('🎙️ שגיאה באתחול Azure Speech:', error);
+                    this.addMessage('bot', 'שגיאה בהפעלת דיבור, נסה שוב מאוחר יותר 😕');
                 }
             }
 
@@ -739,7 +725,7 @@
 
             toggleMute() {
                 this.isMuted = !this.isMuted;
-                this.hasUserInteracted = true; // מסמן אינטראקציה
+                this.hasUserInteracted = true;
                 localStorage.setItem('chatMuted', this.isMuted);
                 this.updateMuteButton();
                 
@@ -763,46 +749,42 @@
             }
 
             async speakText(text) {
-                // בדיקה כפולה - למקרה שהמצב השתנה בזמן ה-timeout
-                if (this.isMuted) {
-                    console.log('🔇 ביטול דיבור - המשתמש השתיק בינתיים');
-                    return;
-                }
-                
-                if (!this.speechConfig) {
-                    console.log('🎙️ Azure Speech לא מוכן');
+                if (this.isMuted || !this.hasUserInteracted || !this.speechConfig) {
+                    console.log('🔇 דיבור מושתק, ללא אינטראקציה או SDK לא מוכן');
                     return;
                 }
                 
                 try {
-                    this.stopSpeaking(); // עוצר דיבור קיים
-                    
+                    this.stopSpeaking();
                     this.isPlaying = true;
                     this.muteButton.classList.add('playing');
-                    
+
                     const audioConfig = SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
                     this.speechSynthesizer = new SpeechSDK.SpeechSynthesizer(this.speechConfig, audioConfig);
                     
                     console.log('🎙️ מתחיל דיבור:', text.substring(0, 50) + '...');
                     
-                    // שמירת הקשר של this
-                    const self = this;
-                    
                     this.speechSynthesizer.speakTextAsync(
                         text,
                         (result) => {
-                            console.log('🎙️ דיבור הושלם');
-                            self.cleanupSpeech(); // שימוש ב-self במקום this
+                            if (result.reason === SpeechSDK.ResultReason.Canceled) {
+                                console.log('🎙️ דיבור בוטל');
+                            } else {
+                                console.log('🎙️ דיבור הושלם');
+                            }
+                            this.cleanupSpeech();
                         },
                         (error) => {
                             console.error('🎙️ שגיאה בדיבור:', error);
-                            self.cleanupSpeech(); // שימוש ב-self במקום this
+                            this.cleanupSpeech();
+                            this.addMessage('bot', 'שגיאה בדיבור, בדוק את ההגדרות 😕');
                         }
                     );
                     
                 } catch (error) {
                     console.error('🎙️ שגיאה ביצירת דיבור:', error);
                     this.cleanupSpeech();
+                    this.addMessage('bot', 'שגיאה בדיבור, נסה שוב מאוחר יותר 😕');
                 }
             }
 
@@ -818,11 +800,20 @@
                 this.cleanupSpeech();
             }
 
+            cleanupSpeech() {
+                this.isPlaying = false;
+                this.muteButton.classList.remove('playing');
+                if (this.speechSynthesizer) {
+                    this.speechSynthesizer.dispose();
+                    this.speechSynthesizer = null;
+                }
+            }
+
             async startConversation() {
                 this.addMessage('bot', 'ברוכים הבאים!');
                 
                 setTimeout(async () => {
-                    if (this.isProcessing) return; // מונע כפילות
+                    if (this.isProcessing) return;
                     
                     try {
                         this.isProcessing = true;
@@ -844,7 +835,6 @@
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply);
                             
-                            // יוצר דיבור רק אם המשתמש רוצה - חיסכון במשאבים
                             if (!this.isMuted) {
                                 setTimeout(() => this.speakText(data.reply), 500);
                             } else {
@@ -866,5 +856,3 @@
 
         document.addEventListener('DOMContentLoaded', () => new ChatApp());
     </script>
-</body>
-</html>
