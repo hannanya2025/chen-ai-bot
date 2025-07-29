@@ -310,6 +310,7 @@
                 this.speechConfig = null;
                 this.isPlaying = false;
                 this.currentAudioStream = null;
+                this.hasUserInteracted = false; // מעקב אחר אינטראקציה
 
                 this.initElements();
                 this.bindEvents();
@@ -567,6 +568,9 @@
                 const text = this.messageInput.value.trim();
                 if (!text) return;
 
+                // מסמן שהמשתמש בצע אינטראקציה
+                this.hasUserInteracted = true;
+
                 console.log('🔥 הודעה חדשה:', text);
                 
                 // מבטל בקשה קיימת אם יש כזו (אבל לא מוחק את התור!)
@@ -668,8 +672,8 @@
                     console.log(`✅ תגובה מהבוט (על ${messageCount} הודעות מאוחדות):`, botReply);
                     this.addMessage('bot', botReply);
                     
-                    // הפעלת דיבור אוטומטית אם לא מושתק
-                    if (!this.isMuted) {
+                    // הפעלת דיבור רק אחרי קליק של משתמש
+                    if (!this.isMuted && this.hasUserInteracted) {
                         setTimeout(() => this.speakText(botReply), 500);
                     }
 
@@ -733,6 +737,7 @@
 
             toggleMute() {
                 this.isMuted = !this.isMuted;
+                this.hasUserInteracted = true; // מסמן אינטראקציה
                 localStorage.setItem('chatMuted', this.isMuted);
                 this.updateMuteButton();
                 
