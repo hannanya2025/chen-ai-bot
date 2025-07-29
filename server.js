@@ -4,8 +4,6 @@ import fetch from 'node-fetch';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
-import fs from 'fs';
-import { promisify } from 'util';
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -131,61 +129,6 @@ const systemInstructions = `
 דבר טבעי, חי ותמיד עם רצף לכיוון סגירה.  
 היות מראה לסגנון התקשורת של הלקוח - זה מה שיוצר חיבור אמיתי.`;
 
-// פונקציה ליצירת קובץ שמע דרך OpenAI TTS
-async function generateSpeech(text) {
-  const OPENAI_KEY = process.env.OPENAI_KEY;
-  if (!OPENAI_KEY) throw new Error('Missing OPENAI_KEY');
-
-  const fileName = `speech-${Date.now()}.mp3`;
-  const audioFilePath = path.join(__dirname, 'public', fileName);
-  
-  try {
-    console.log('🎙️ יוצר קובץ שמע עבור:', text.substring(0, 50) + '...');
-    
-    const response = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        voice: 'alloy', // מתאים לגבר בן 30
-        input: text,
-        response_format: 'mp3',
-        speed: 1.2 // מהירות כמו שביקשת
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`TTS API Error ${response.status}: ${errorText}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    await promisify(fs.writeFile)(audioFilePath, Buffer.from(arrayBuffer));
-    
-    console.log(`🎙️ קובץ שמע נוצר: ${audioFilePath}`);
-    
-    // מחזיר את הנתיב הנכון
-    const audioUrl = `/${fileName}`;
-    
-    // מחק את הקובץ אחרי 5 דקות
-    setTimeout(() => {
-      if (fs.existsSync(audioFilePath)) {
-        fs.unlinkSync(audioFilePath);
-        console.log(`🗑️ קובץ שמע נמחק: ${fileName}`);
-      }
-    }, 300000);
-    
-    return audioUrl;
-    
-  } catch (err) {
-    console.error('🎙️ שגיאה ביצירת שמע:', err.message);
-    throw err;
-  }
-}
-
 // פונקציה לעיבוד הודעות עם המתנה להקלדה
 async function processMessages(threadId) {
   if (processingThreads.has(threadId)) return;
@@ -297,10 +240,9 @@ async function processMessages(threadId) {
     const lastBotMessage = messagesData.data.find(m => m.role === 'assistant');
     const reply = lastBotMessage?.content[0]?.text?.value || 'לא התקבלה תגובה';
 
-    const audioUrl = await generateSpeech(reply);
-
+    // כעת לא יוצרים קובץ שמע כי Azure מטפל בזה בצד הלקוח
     const allClients = currentClients.splice(0);
-    allClients.forEach(client => client?.resolve?.({ reply, threadId, audioUrl }));
+    allClients.forEach(client => client?.resolve?.({ reply, threadId }));
 
     lastTypingTimeMap.set(threadId + '_processed', Date.now());
 
@@ -362,8 +304,8 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const result = await scheduleProcessing(threadId, message);
-    const { reply, audioUrl } = await result;
-    res.json({ reply, threadId, audioUrl });
+    const { reply } = await result; // הסרנו את audioUrl
+    res.json({ reply, threadId });
 
   } catch (err) {
     res.status(500).json({ error: err.message || 'Server error' });
