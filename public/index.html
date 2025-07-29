@@ -182,6 +182,12 @@
             transform: scale(1.1);
         }
 
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+        }
+
         .action-button:hover:not(.recording) {
             transform: scale(1.1);
         }
@@ -266,6 +272,7 @@
 
         <div class="input-container">
             <input type="text" id="messageInput" class="message-input" placeholder="כתוב הודעה או החזק להקלטה..." autocomplete="off"/>
+            <button id="muteButton" class="action-button mute-button" title="השתק/הפעל דיבור">🔊</button>
             <button id="actionButton" class="action-button voice-mode" title="לחץ להקלטה">🎤</button>
         </div>
     </div>
@@ -281,11 +288,18 @@
                 this.currentTranscript = '';
                 this.messageQueue = [];
                 this.queueTimer = null;
-                this.currentAbortController = null; // לביטול בקשות
+                this.currentAbortController = null;
+                
+                // Azure Speech Services
+                this.speechSynthesizer = null;
+                this.speechConfig = null;
+                this.isPlaying = false;
+                this.currentAudioStream = null;
 
                 this.initElements();
                 this.bindEvents();
                 this.initVoiceCapabilities();
+                this.initAzureSpeech();
                 this.startConversation();
             }
 
@@ -293,6 +307,10 @@
                 this.chatMessages = document.getElementById('chatMessages');
                 this.messageInput = document.getElementById('messageInput');
                 this.actionButton = document.getElementById('actionButton');
+                this.muteButton = document.getElementById('muteButton');
+                
+                this.isMuted = localStorage.getItem('chatMuted') === 'true';
+                this.updateMuteButton();
                 
                 this.messageInput.focus();
             }
@@ -332,6 +350,10 @@
 
                 this.messageInput.addEventListener('input', () => {
                     this.updateButtonMode();
+                });
+
+                this.muteButton.addEventListener('click', () => {
+                    this.toggleMute();
                 });
             }
 
@@ -630,6 +652,11 @@
                     
                     console.log(`✅ תגובה מהבוט (על ${messageCount} הודעות מאוחדות):`, botReply);
                     this.addMessage('bot', botReply);
+                    
+                    // הפעלת דיבור אוטומטית אם לא מושתק
+                    if (!this.isMuted) {
+                        setTimeout(() => this.speakText(botReply), 500);
+                    }
 
                 } catch (error) {
                     if (error.name === 'AbortError') {
