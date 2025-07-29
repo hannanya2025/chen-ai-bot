@@ -325,7 +325,7 @@
                 this.actionButton = document.getElementById('actionButton');
                 this.muteButton = document.getElementById('muteButton');
                 
-                this.isMuted = localStorage.getItem('chatMuted') === 'true';
+                this.isMuted = localStorage.getItem('chatMuted') !== 'false'; // מתחיל כמושתק!
                 this.updateMuteButton();
                 
                 this.messageInput.focus();
@@ -672,9 +672,11 @@
                     console.log(`✅ תגובה מהבוט (על ${messageCount} הודעות מאוחדות):`, botReply);
                     this.addMessage('bot', botReply);
                     
-                    // הפעלת דיבור רק אחרי קליק של משתמש
-                    if (!this.isMuted && this.hasUserInteracted) {
+                    // יוצר דיבור רק אם המשתמש הפעיל אותו - חיסכון במשאבים!
+                    if (!this.isMuted) {
                         setTimeout(() => this.speakText(botReply), 500);
+                    } else {
+                        console.log('🔇 דיבור מושתק - לא מפעיל Azure Speech (חיסכון במשאבים)');
                     }
 
                 } catch (error) {
@@ -751,7 +753,7 @@
             updateMuteButton() {
                 if (this.isMuted) {
                     this.muteButton.textContent = '🔇';
-                    this.muteButton.title = 'הפעל דיבור';
+                    this.muteButton.title = 'הפעל דיבור (כמו ביוטיוב)';
                     this.muteButton.classList.add('muted');
                 } else {
                     this.muteButton.textContent = '🔊';
@@ -761,7 +763,16 @@
             }
 
             async speakText(text) {
-                if (this.isMuted || !this.speechConfig) return;
+                // בדיקה כפולה - למקרה שהמצב השתנה בזמן ה-timeout
+                if (this.isMuted) {
+                    console.log('🔇 ביטול דיבור - המשתמש השתיק בינתיים');
+                    return;
+                }
+                
+                if (!this.speechConfig) {
+                    console.log('🎙️ Azure Speech לא מוכן');
+                    return;
+                }
                 
                 try {
                     this.stopSpeaking(); // עוצר דיבור קיים
@@ -833,9 +844,11 @@
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply);
                             
-                            // הפעלת דיבור אוטומטית אם לא מושתק
+                            // יוצר דיבור רק אם המשתמש רוצה - חיסכון במשאבים
                             if (!this.isMuted) {
                                 setTimeout(() => this.speakText(data.reply), 500);
+                            } else {
+                                console.log('🔇 דיבור מושתק - לא מפעיל Azure Speech');
                             }
                         } else {
                             throw new Error(`Failed to start conversation: ${await response.text()}`);
