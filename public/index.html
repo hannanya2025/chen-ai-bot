@@ -769,15 +769,18 @@
                     
                     console.log('🎙️ מתחיל דיבור:', text.substring(0, 50) + '...');
                     
+                    // שמירת הקשר של this
+                    const self = this;
+                    
                     this.speechSynthesizer.speakTextAsync(
                         text,
                         (result) => {
                             console.log('🎙️ דיבור הושלם');
-                            this.cleanupSpeech();
+                            self.cleanupSpeech(); // שימוש ב-self במקום this
                         },
                         (error) => {
                             console.error('🎙️ שגיאה בדיבור:', error);
-                            this.cleanupSpeech();
+                            self.cleanupSpeech(); // שימוש ב-self במקום this
                         }
                     );
                     
