@@ -176,6 +176,21 @@
             box-shadow: 0 3px 10px rgba(255, 107, 107, 0.3);
         }
 
+        .action-button.mute-button {
+            background: linear-gradient(135deg, #6c757d, #5a6268);
+            box-shadow: 0 3px 10px rgba(108, 117, 125, 0.3);
+        }
+
+        .action-button.mute-button.muted {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            box-shadow: 0 3px 10px rgba(220, 53, 69, 0.3);
+        }
+
+        .action-button.mute-button.playing {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            animation: pulse-green 1.5s infinite;
+        }
+
         .action-button.recording {
             background: linear-gradient(135deg, #ff4757, #ff3838);
             animation: pulse 1.5s infinite;
@@ -685,6 +700,105 @@
                 }
             }
 
+            async initAzureSpeech() {
+                try {
+                    if (typeof SpeechSDK === 'undefined') {
+                        console.log('🎙️ טוען Azure Speech SDK...');
+                        await this.loadAzureSpeechSDK();
+                    }
+
+                    this.speechConfig = SpeechSDK.SpeechConfig.fromSubscription(
+                        '8JzJ0IqjGsT6OJT491zVkip4jrkzVU9w8IjiljTJjw0hpW8dOJqwJQQJ99BGACYeBjFXJ3w3AAAYACOGgd8B',
+                        'eastus'
+                    );
+                    
+                    this.speechConfig.speechSynthesisVoiceName = 'he-IL-AvriNeural';
+                    this.speechConfig.speechSynthesisOutputFormat = SpeechSDK.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3;
+                    
+                    console.log('🎙️ Azure Speech מוכן');
+                } catch (error) {
+                    console.error('🎙️ שגיאה באתחול Azure Speech:', error);
+                }
+            }
+
+            async loadAzureSpeechSDK() {
+                return new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = 'https://aka.ms/csspeech/jsbrowserpackageraw';
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+            }
+
+            toggleMute() {
+                this.isMuted = !this.isMuted;
+                localStorage.setItem('chatMuted', this.isMuted);
+                this.updateMuteButton();
+                
+                if (this.isMuted && this.isPlaying) {
+                    this.stopSpeaking();
+                }
+                
+                console.log(this.isMuted ? '🔇 דיבור מושתק' : '🔊 דיבור מופעל');
+            }
+
+            updateMuteButton() {
+                if (this.isMuted) {
+                    this.muteButton.textContent = '🔇';
+                    this.muteButton.title = 'הפעל דיבור';
+                    this.muteButton.classList.add('muted');
+                } else {
+                    this.muteButton.textContent = '🔊';
+                    this.muteButton.title = 'השתק דיבור';
+                    this.muteButton.classList.remove('muted');
+                }
+            }
+
+            async speakText(text) {
+                if (this.isMuted || !this.speechConfig) return;
+                
+                try {
+                    this.stopSpeaking(); // עוצר דיבור קיים
+                    
+                    this.isPlaying = true;
+                    this.muteButton.classList.add('playing');
+                    
+                    const audioConfig = SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
+                    this.speechSynthesizer = new SpeechSDK.SpeechSynthesizer(this.speechConfig, audioConfig);
+                    
+                    console.log('🎙️ מתחיל דיבור:', text.substring(0, 50) + '...');
+                    
+                    this.speechSynthesizer.speakTextAsync(
+                        text,
+                        (result) => {
+                            console.log('🎙️ דיבור הושלם');
+                            this.cleanupSpeech();
+                        },
+                        (error) => {
+                            console.error('🎙️ שגיאה בדיבור:', error);
+                            this.cleanupSpeech();
+                        }
+                    );
+                    
+                } catch (error) {
+                    console.error('🎙️ שגיאה ביצירת דיבור:', error);
+                    this.cleanupSpeech();
+                }
+            }
+
+            stopSpeaking() {
+                if (this.speechSynthesizer) {
+                    try {
+                        this.speechSynthesizer.close();
+                        console.log('🎙️ דיבור נעצר');
+                    } catch (error) {
+                        console.error('🎙️ שגיאה בעצירת דיבור:', error);
+                    }
+                }
+                this.cleanupSpeech();
+            }
+
             async startConversation() {
                 this.addMessage('bot', 'ברוכים הבאים!');
                 
@@ -710,6 +824,11 @@
                             
                             this.hideTypingIndicator();
                             this.addMessage('bot', data.reply);
+                            
+                            // הפעלת דיבור אוטומטית אם לא מושתק
+                            if (!this.isMuted) {
+                                setTimeout(() => this.speakText(data.reply), 500);
+                            }
                         } else {
                             throw new Error(`Failed to start conversation: ${await response.text()}`);
                         }
